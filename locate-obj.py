@@ -219,8 +219,8 @@ frame_index = 0
 
 original_width = 3840
 original_height = 2160
-resized_width = 1500
-resized_height = 720
+resized_width = parameters["resized_width"]
+resized_height = parameters["resized_height"]
 scale_x = original_width / resized_width
 scale_y = original_height / resized_height
 window_name = "Locate"
@@ -253,7 +253,7 @@ while True:
         desenhar_centro(image, click[0], click[1], (255, 0, 0))
         reta = reta3D(K_inv, R_t, np.zeros(3), (click[0], click[1]))
         click_lat_long = find_ground_intersection(lat, long, h, reta[1])
-        print_on_pixel(image, str(click_lat_long), click[0], click[1], (255, 0, 0))
+        print_on_pixel(image, f"LAT:{click_lat_long[0]}, LONG:{click_lat_long[1]}", click[0], click[1], (255, 0, 0))
 
     short_image = cv2.resize(image, (int(original_width / scale_reduct_inference), int(original_height / scale_reduct_inference)))
     results = client.infer(short_image, model_id=f"{project_id}/{model_version}")
@@ -278,7 +278,7 @@ while True:
 
             reta = reta3D(K_inv, R_t, np.zeros(3), (prediction_x, prediction_y))
             pred_lat_long = find_ground_intersection(lat, long, h, reta[1])
-            print_on_pixel(image, str(pred_lat_long), x, y, (0, 0, 255))
+            print_on_pixel(image, f"LAT:{pred_lat_long[0]}, LONG:{pred_lat_long[1]}", x, y, (0, 0, 255))
             
 
     rez_img = cv2.resize(image, (resized_width, resized_height))
