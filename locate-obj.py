@@ -3,6 +3,7 @@ from inference_sdk import InferenceHTTPClient
 import numpy as np
 import re
 from collections import deque
+import json
 
 def parse_srt(file_path):
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -195,6 +196,8 @@ def mouse_click(event, x, y, flags, param):
     elif event == cv2.EVENT_RBUTTONDOWN:  # Clique com o botão direito
         clicks.popleft()
 
+with open("parameters.json", "r") as json_file:
+    parameters = json.load(json_file)
 
 K = [[2.85894134e+03, 0.00000000e+00, 1.97587073e+03],
  [0.00000000e+00, 2.85951996e+03, 1.49243924e+03],
@@ -203,15 +206,15 @@ K_inv = np.linalg.inv(K)
 
 project_id = "bus-detection-nrsmx"
 model_version = 1
-api_key = "S3lt1G4Wx3nBEACDxu9z"
-api_url = "http://localhost:9001"
+api_key = parameters["api_key"]
+api_url = parameters["api_url"]
 
 client = InferenceHTTPClient(api_url=api_url, api_key=api_key)
 
-source = "DJI-Imagens/Video_Presidente_Vargas/DJI_20240829103719_0008_V.MP4"
+source = parameters["video_path"]
 cap = cv2.VideoCapture(source)
 
-frame_info = parse_srt('DJI-Imagens/Video_Presidente_Vargas/DJI_20240829103719_0008_V.SRT')
+frame_info = parse_srt(parameters["video_data_path"])
 frame_index = 0
 
 original_width = 3840
@@ -221,6 +224,8 @@ resized_height = 720
 scale_x = original_width / resized_width
 scale_y = original_height / resized_height
 window_name = "Locate"
+
+scale_reduct_inference = 6
 
 clicks = deque(maxlen=5)
 
@@ -250,12 +255,16 @@ while True:
         click_lat_long = find_ground_intersection(lat, long, h, reta[1])
         print_on_pixel(image, str(click_lat_long), click[0], click[1], (255, 0, 0))
 
-    results = client.infer(image, model_id=f"{project_id}/{model_version}")
+    short_image = cv2.resize(image, (int(original_width / scale_reduct_inference), int(original_height / scale_reduct_inference)))
+    results = client.infer(short_image, model_id=f"{project_id}/{model_version}")
 
     for prediction in results['predictions']:
                         
-        width, height = prediction['width'], prediction['height']
-        x, y = int(prediction['x'] - width/2) , int(prediction['y'] - height/2)
+        width, height = int(prediction['width'] * scale_reduct_inference), int(prediction['height'] * scale_reduct_inference)
+        prediction_x = int(prediction['x'] * scale_reduct_inference)
+        prediction_y = int(prediction['y'] * scale_reduct_inference)
+
+        x, y = int(prediction_x - width/2) , int(prediction_y - height/2)
         
         class_id = prediction['class_id']
 
@@ -265,9 +274,9 @@ while True:
 
         if class_id == 0:
             cv2.rectangle(image, (x, y), (x2, y2), (0, 0, 255), 3)
-            desenhar_centro(image, int(prediction['x']), int(prediction['y']), (0, 0, 255))
+            desenhar_centro(image, int(prediction_x), int(prediction_y), (0, 0, 255))
 
-            reta = reta3D(K_inv, R_t, np.zeros(3), (prediction['x'], prediction['y']))
+            reta = reta3D(K_inv, R_t, np.zeros(3), (prediction_x, prediction_y))
             pred_lat_long = find_ground_intersection(lat, long, h, reta[1])
             print_on_pixel(image, str(pred_lat_long), x, y, (0, 0, 255))
             
