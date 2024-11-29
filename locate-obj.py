@@ -2,6 +2,7 @@ import cv2
 from inference_sdk import InferenceHTTPClient
 import numpy as np
 import re
+from collections import deque
 
 def parse_srt(file_path):
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -166,7 +167,7 @@ def desenhar_centro(image, center_x, center_y, cor):
     # Desenhar a linha vertical do '+'
     cv2.line(image, (center_x, int(center_y - line_length // 2)), (center_x, int(center_y + line_length // 2)),  cor, 2)
 
-def print_on_prediction(image, label, x, y):
+def print_on_pixel(image, label, x, y, cor):
     font_scale = 1  # Tamanho da fonte
     font_thickness = 2  # Espessura da fonte
     font = cv2.FONT_HERSHEY_SIMPLEX  # Fonte
@@ -183,9 +184,16 @@ def print_on_prediction(image, label, x, y):
         text_x = 5  # Ajustar para a borda esquerda
 
 
-    cv2.putText(image, label, (text_x, text_y), font, font_scale, (0, 0, 255), font_thickness)
+    cv2.putText(image, label, (text_x, text_y), font, font_scale, cor, font_thickness)
 
-
+def mouse_click(event, x, y, flags, param):
+    global clicks
+    if event == cv2.EVENT_LBUTTONDOWN:  # Clique com o botão esquerdo
+        original_x = int(x * scale_x)
+        original_y = int(y * scale_y)
+        clicks.append((original_x, original_y))
+    elif event == cv2.EVENT_RBUTTONDOWN:  # Clique com o botão direito
+        clicks.popleft()
 
 
 K = [[2.85894134e+03, 0.00000000e+00, 1.97587073e+03],
@@ -206,6 +214,16 @@ cap = cv2.VideoCapture(source)
 frame_info = parse_srt('DJI-Imagens/Video_Presidente_Vargas/DJI_20240829103719_0008_V.SRT')
 frame_index = 0
 
+original_width = 3840
+original_height = 2160
+resized_width = 1500
+resized_height = 720
+scale_x = original_width / resized_width
+scale_y = original_height / resized_height
+window_name = "Locate"
+
+clicks = deque(maxlen=5)
+
 while True:
     ret, image = cap.read()
     if not ret:
@@ -216,6 +234,21 @@ while True:
         break
     elif key & 0xFF == ord('s'):
         continue
+
+    yaw = float(frame_info[frame_index]['gb_yaw'])
+    pitch = float(frame_info[frame_index]['gb_pitch'])
+    roll = float(frame_info[frame_index]['gb_roll'])
+    R_t = np.transpose(yaw_pitch_roll_to_rotation_matrix(yaw, pitch, roll))
+
+    h = float(frame_info[frame_index]['rel_alt'])
+    lat = float(frame_info[frame_index]['latitude'])
+    long = float(frame_info[frame_index]['longitude'])
+
+    for click in clicks:
+        desenhar_centro(image, click[0], click[1], (255, 0, 0))
+        reta = reta3D(K_inv, R_t, np.zeros(3), (click[0], click[1]))
+        click_lat_long = find_ground_intersection(lat, long, h, reta[1])
+        print_on_pixel(image, str(click_lat_long), click[0], click[1], (255, 0, 0))
 
     results = client.infer(image, model_id=f"{project_id}/{model_version}")
 
@@ -234,20 +267,12 @@ while True:
             cv2.rectangle(image, (x, y), (x2, y2), (0, 0, 255), 3)
             desenhar_centro(image, int(prediction['x']), int(prediction['y']), (0, 0, 255))
 
-            yaw = float(frame_info[frame_index]['gb_yaw'])
-            pitch = float(frame_info[frame_index]['gb_pitch'])
-            roll = float(frame_info[frame_index]['gb_roll'])
-            R_t = np.transpose(yaw_pitch_roll_to_rotation_matrix(yaw, pitch, roll))
             reta = reta3D(K_inv, R_t, np.zeros(3), (prediction['x'], prediction['y']))
-
-            h = float(frame_info[frame_index]['rel_alt'])
-            lat = float(frame_info[frame_index]['latitude'])
-            long = float(frame_info[frame_index]['longitude'])
             pred_lat_long = find_ground_intersection(lat, long, h, reta[1])
-            print(pred_lat_long)
-            print_on_prediction(image, str(pred_lat_long), x, y)
+            print_on_pixel(image, str(pred_lat_long), x, y, (0, 0, 255))
             
 
-    rez_img = cv2.resize(image, (1500, 720))
-    cv2.imshow('img', rez_img)
+    rez_img = cv2.resize(image, (resized_width, resized_height))
+    cv2.imshow(window_name, rez_img)
+    cv2.setMouseCallback(window_name, mouse_click)
     frame_index += 1
