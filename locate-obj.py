@@ -4,6 +4,24 @@ import numpy as np
 import re
 from collections import deque
 import json
+import utm
+
+droneToMundoR = np.array([[0,1,0],[1,0,0],[0,0,-1]])
+mundoToDroneR = np.transpose(droneToMundoR)
+cameraToDroneR = np.array([[0,0,1],[1,0,0],[0,1,0]])
+droneToCameraR = np.transpose(cameraToDroneR)
+cameraToMundoR = np.array([[1,0,0],[0,0,1],[0,-1,0]])
+mundoToCameraR = np.transpose(cameraToMundoR)
+
+def inv_K(K):
+    fx = K[0][0]
+    fy = K[1][1]
+    cx = K[0][2]
+    cy = K[1][2]
+    K_inv = np.array([[1/fx, 0, -cx/fx],
+             [0, 1/fy, -cy/fy],
+             [0, 0, 1]])
+    return K_inv
 
 def parse_srt(file_path):
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -103,6 +121,28 @@ def find_ground_intersection(lat, lon, alt, vec):
 
     return new_lat, new_lon
 
+def find_ground_intersection_UTM(north, east, alt, vec):
+
+    # Descompactar vetor
+    x, y, z = vec
+
+    # Evitar divisão por zero no vetor
+    if z == 0:
+        raise ValueError("O vetor é paralelo ao solo e nunca tocará o chão.")
+
+    # Calcular t (tempo escalar para atingir o solo)
+    t = -alt / z
+
+    # Coordenadas deslocadas no plano cartesiano
+    x_t = t * x
+    y_t = t * y
+
+    # Conversão de deslocamento para UTM
+    new_north = north + y_t
+    new_east = east + x_t
+
+    return new_north, new_east
+
 def find_ground_intersection_ECEF(lat, lon, alt, vec, earth_radius=6371000):
     """
     Encontra a latitude e longitude onde o vetor atinge o solo, considerando a curvatura da Terra.
@@ -154,9 +194,9 @@ def find_ground_intersection_ECEF(lat, lon, alt, vec, earth_radius=6371000):
     return new_lat, new_lon
 
 def reta3D(K_inv, R_t, t, pixel):
-    pixel_RP2 = [pixel[0], pixel[1], 1 ]
-    p0 = - R_t @ np.transpose(t)
-    pv = R_t @ K_inv @ np.transpose(pixel_RP2)
+    pixel_RP2 = np.array([[pixel[0]], [pixel[1]], [1]])
+    p0 = - R_t @ t
+    pv = R_t @ K_inv @ pixel_RP2
     return (p0, pv)
 
 def desenhar_centro(image, center_x, center_y, cor):
@@ -199,12 +239,13 @@ def mouse_click(event, x, y, flags, param):
 with open("parameters.json", "r") as json_file:
     parameters = json.load(json_file)
 
-K = [[2.85894134e+03, 0.00000000e+00, 1.97587073e+03],
- [0.00000000e+00, 2.85951996e+03, 1.49243924e+03],
- [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
-K_inv = np.linalg.inv(K)
+K_path = parameters["K_path"]
+with open(K_path, "r") as json_file:
+    K = np.array(json.load(json_file), dtype=np.float64)
 
-project_id = "bus-detection-nrsmx"
+K_inv = inv_K(K)
+
+project_id = "car-models-rr7w5"
 model_version = 1
 api_key = parameters["api_key"]
 api_url = parameters["api_url"]
@@ -217,8 +258,8 @@ cap = cv2.VideoCapture(source)
 frame_info = parse_srt(parameters["video_data_path"])
 frame_index = 0
 
-original_width = 3840
-original_height = 2160
+original_width = 1920
+original_height = 1080
 resized_width = parameters["resized_width"]
 resized_height = parameters["resized_height"]
 scale_x = original_width / resized_width
@@ -228,32 +269,53 @@ window_name = "Locate"
 scale_reduct_inference = 6
 
 clicks = deque(maxlen=5)
+# Localizacao carro: [latitude: -22.905551] [longitude: -43.221218] [rel_alt: 2.847 abs_alt: 15.331]
+car_x, car_y, car_zn, car_zl = utm.from_latlon(-22.905551, -43.221218)
+car_z = 15.331 - 2.847
+t_car_mundo = np.array([[car_x],[car_y],[car_z]])
 
+images = []
 while True:
     ret, image = cap.read()
-    if not ret:
-        break
+    if ret:
+        images.append(image)
+        frame_index += 1
 
     key = cv2.waitKey(1)
     if key & 0xFF == ord('q'):
         break
-    elif key & 0xFF == ord('s'):
+    elif key & 0xFF == ord('d'):
+        if frame_index + 1 < len(images):
+            frame_index += 1
         continue
+    elif key & 0xFF == ord('a'):
+        frame_index -= 10
+        if frame_index < 1:
+            frame_index = 1
+        continue
+    
+    image = images[frame_index - 1 if frame_index > 0 else 0]
 
     yaw = float(frame_info[frame_index]['gb_yaw'])
     pitch = float(frame_info[frame_index]['gb_pitch'])
     roll = float(frame_info[frame_index]['gb_roll'])
-    R_t = np.transpose(yaw_pitch_roll_to_rotation_matrix(yaw, pitch, roll))
+    R_drone = yaw_pitch_roll_to_rotation_matrix(yaw, pitch, roll)
+    R_drone_T = np.transpose(R_drone)
 
     h = float(frame_info[frame_index]['rel_alt'])
+    h_abs = float(frame_info[frame_index]['abs_alt'])
     lat = float(frame_info[frame_index]['latitude'])
     long = float(frame_info[frame_index]['longitude'])
 
+    easting, northing, zone_number, zone_letter = utm.from_latlon(lat, long)
+    t_drone_mundo = np.array([[easting], [northing], [h_abs]])
+    print_on_pixel(image, f"index:{frame_index}, N:{int(northing)}, E:{int(easting)}, h_rel:{h}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,0))
+
     for click in clicks:
         desenhar_centro(image, click[0], click[1], (255, 0, 0))
-        reta = reta3D(K_inv, R_t, np.zeros(3), (click[0], click[1]))
-        click_lat_long = find_ground_intersection(lat, long, h, reta[1])
-        print_on_pixel(image, f"LAT:{click_lat_long[0]}, LONG:{click_lat_long[1]}", click[0], click[1], (255, 0, 0))
+        reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (click[0], click[1]))
+        click_lat_long = find_ground_intersection_UTM(northing, easting, h, reta[1])
+        print_on_pixel(image, f"N:{click_lat_long[0]-car_y}, E:{click_lat_long[1]-car_x}, ZN:{zone_number}, ZL:{zone_letter}", click[0], click[1], (255, 0, 0))
 
     short_image = cv2.resize(image, (int(original_width / scale_reduct_inference), int(original_height / scale_reduct_inference)))
     results = client.infer(short_image, model_id=f"{project_id}/{model_version}")
@@ -276,12 +338,17 @@ while True:
             cv2.rectangle(image, (x, y), (x2, y2), (0, 0, 255), 3)
             desenhar_centro(image, int(prediction_x), int(prediction_y), (0, 0, 255))
 
-            reta = reta3D(K_inv, R_t, np.zeros(3), (prediction_x, prediction_y))
-            pred_lat_long = find_ground_intersection(lat, long, h, reta[1])
-            print_on_pixel(image, f"LAT:{pred_lat_long[0]}, LONG:{pred_lat_long[1]}", x, y, (0, 0, 255))
-            
+            reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (prediction_x, prediction_y))
+            pred_UTM = find_ground_intersection_UTM(northing, easting, h, reta[1])
+            print_on_pixel(image, f"N:{pred_UTM[0]}, E:{pred_UTM[1]}, ZN:{zone_number}, ZL:{zone_letter}", x, y, (0, 0, 255))
+    
+    R = droneToCameraR @ R_drone_T @ mundoToDroneR
+    t =  - droneToCameraR @ R_drone_T @ mundoToDroneR @ t_drone_mundo
+    pixel_car = K @ np.concatenate((R, t), axis=1) @ np.vstack((t_car_mundo, [1]))
+    pixel_car = pixel_car.flatten()
+    pixel_car = pixel_car / pixel_car[2]
+    desenhar_centro(image, int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (255,0,0))
 
     rez_img = cv2.resize(image, (resized_width, resized_height))
     cv2.imshow(window_name, rez_img)
     cv2.setMouseCallback(window_name, mouse_click)
-    frame_index += 1
