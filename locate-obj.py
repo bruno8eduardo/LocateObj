@@ -5,6 +5,9 @@ import re
 from collections import deque
 import json
 import utm
+import glfw
+from OpenGL.GL import *
+from OpenGL.GLU import *
 
 droneToMundoR = np.array([[0,1,0],[1,0,0],[0,0,-1]])
 mundoToDroneR = np.transpose(droneToMundoR)
@@ -12,6 +15,10 @@ cameraToDroneR = np.array([[0,0,1],[1,0,0],[0,1,0]])
 droneToCameraR = np.transpose(cameraToDroneR)
 cameraToMundoR = np.array([[1,0,0],[0,0,1],[0,-1,0]])
 mundoToCameraR = np.transpose(cameraToMundoR)
+cameraToOpenglR = np.array([[1,0,0],[0,-1,0],[0,0,-1]])
+
+near=0.1
+far=1000.0
 
 def inv_K(K):
     fx = K[0][0]
@@ -121,7 +128,7 @@ def find_ground_intersection(lat, lon, alt, vec):
 
     return new_lat, new_lon
 
-def find_ground_intersection_UTM(north, east, alt, vec):
+def find_ground_intersection_UTM(north, east, alt_rel, alt_abs, vec):
 
     # Descompactar vetor
     x, y, z = vec
@@ -131,7 +138,7 @@ def find_ground_intersection_UTM(north, east, alt, vec):
         raise ValueError("O vetor é paralelo ao solo e nunca tocará o chão.")
 
     # Calcular t (tempo escalar para atingir o solo)
-    t = -alt / z
+    t = -alt_rel / z
 
     # Coordenadas deslocadas no plano cartesiano
     x_t = t * x
@@ -141,7 +148,7 @@ def find_ground_intersection_UTM(north, east, alt, vec):
     new_north = north + y_t
     new_east = east + x_t
 
-    return new_north, new_east
+    return new_east, new_north, np.array([alt_abs - alt_rel])
 
 def find_ground_intersection_ECEF(lat, lon, alt, vec, earth_radius=6371000):
     """
@@ -229,12 +236,99 @@ def print_on_pixel(image, label, x, y, cor):
 
 def mouse_click(event, x, y, flags, param):
     global clicks
+    global clicks_UTM
     if event == cv2.EVENT_LBUTTONDOWN:  # Clique com o botão esquerdo
         original_x = int(x * scale_x)
         original_y = int(y * scale_y)
         clicks.append((original_x, original_y))
     elif event == cv2.EVENT_RBUTTONDOWN:  # Clique com o botão direito
-        clicks.popleft()
+        # clicks.popleft()
+        clicks_UTM.popleft()
+
+def build_projection_matrix(K, width, height, near=near, far=far):
+    """ Converte a matriz K para o formato de projeção do OpenGL. """
+    fx, fy = K[0, 0], K[1, 1]
+    cx, cy = K[0, 2], K[1, 2]
+
+    proj = np.zeros((4, 4))
+    proj[0, 0] = 2 * fx / width
+    proj[1, 1] = 2 * fy / height
+    proj[0, 2] = 1 - (2 * cx / width)
+    proj[1, 2] = (2 * cy / height) - 1
+    proj[2, 2] = -(far + near) / (far - near)
+    proj[2, 3] = -2 * far * near / (far - near)
+    proj[3, 2] = -1
+    return proj
+
+def build_view_matrix(R, t):
+    """ Converte R e t para uma matriz de visualização do OpenGL. """
+    Rt = np.concatenate((R, t), axis=1)
+    view = np.eye(4)  # Matriz identidade 4x4
+    view[:3, :4] = Rt  # Insere [R | t] na matriz 4x4
+    return view
+
+def draw_cone_sphere(x, y, z, pitch):
+
+    # Ativar plano de corte
+    glEnable(GL_CLIP_PLANE0)
+    glClipPlane(GL_CLIP_PLANE0, [0.0, 1.0, 0.0, 0.0])
+
+    # Esfera vermelha
+    glMaterialfv(GL_FRONT, GL_AMBIENT, [1.0, 0.0, 0.0, 1.0])
+    glMaterialfv(GL_FRONT, GL_DIFFUSE, [1.0, 0.0, 0.0, 1.0])
+    glMaterialfv(GL_FRONT, GL_SPECULAR, [1.0, 1.0, 1.0, 1.0])
+    glMaterialf(GL_FRONT, GL_SHININESS, 50.0)
+
+    sphere_quadric = gluNewQuadric()
+    glPushMatrix()
+    glTranslatef(x, y, z)  # **Posicionar no local correto**
+    gluSphere(sphere_quadric, 1.5, 20, 20)
+    glPopMatrix()
+
+    # Desabilitar o plano de corte
+    glDisable(GL_CLIP_PLANE0)
+
+    # Cone
+    cone_quadric = gluNewQuadric()
+    glPushMatrix()
+    glTranslatef(x, y, z)  # **Mesmo posicionamento para o cone**
+    glRotatef(90 - pitch, 1, 0, 0)
+    gluCylinder(cone_quadric, 1.5, 0, 5.0, 20, 20)
+    glPopMatrix()
+
+def render(draw_func):
+    
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+    glLoadIdentity()
+    
+    glEnable(GL_DEPTH_TEST)
+
+    draw_func()
+
+    glfw.swap_buffers(window)
+
+def draw_opengl(pixels_opengl, imagem_fundo):
+    # Capturar a tela do OpenGL
+    imagem_renderizada = np.frombuffer(pixels_opengl, dtype=np.uint8).reshape(1080, 1920, 3)
+    imagem_renderizada = cv2.flip(imagem_renderizada, 0)
+    imagem_renderizada = cv2.cvtColor(imagem_renderizada, cv2.COLOR_RGB2BGR)  # Converter RGB → BGR
+
+    # Criar uma máscara onde os pixels pretos indicam transparência
+    gray = cv2.cvtColor(imagem_renderizada, cv2.COLOR_BGR2GRAY)  # Converter para tons de cinza
+    _, mask = cv2.threshold(gray, 1, 255, cv2.THRESH_BINARY)  # Criar máscara: 0 para preto, 255 para o resto
+
+    # Inverter a máscara para pegar apenas o fundo
+    mask_inv = cv2.bitwise_not(mask)
+
+    # Criar uma versão da imagem de fundo com buraco onde os objetos estão
+    fundo_com_buraco = cv2.bitwise_and(imagem_fundo, imagem_fundo, mask=mask_inv)
+
+    # Criar uma versão da renderização que mantém apenas os objetos
+    objetos_renderizados = cv2.bitwise_and(imagem_renderizada, imagem_renderizada, mask=mask)
+
+    # Combinar as duas imagens corretamente
+    resultado = cv2.add(fundo_com_buraco, objetos_renderizados)
+    return resultado
 
 with open("parameters.json", "r") as json_file:
     parameters = json.load(json_file)
@@ -242,6 +336,41 @@ with open("parameters.json", "r") as json_file:
 K_path = parameters["K_path"]
 with open(K_path, "r") as json_file:
     K = np.array(json.load(json_file), dtype=np.float64)
+
+# Inicializar GLFW
+if not glfw.init():
+    raise Exception("GLFW não pôde ser inicializado!")
+
+# Criar janela OpenGL
+window = glfw.create_window(1920, 1080, "Render 3D", None, None)
+glfw.make_context_current(window)
+
+# Ativar iluminação
+glEnable(GL_LIGHTING)
+
+# Criar e ativar uma luz
+glEnable(GL_LIGHT0)
+
+# Definir a posição da luz (x, y, z, w)
+light_position = [0, 3, 3, 1]  # (x=0, y=3, z=3, w=1 para luz pontual)
+glLightfv(GL_LIGHT0, GL_POSITION, light_position)
+
+# Definir intensidade da luz ambiente, difusa e especular
+light_ambient = [0.2, 0.2, 0.2, 1.0]  # Luz fraca no ambiente
+light_diffuse = [0.8, 0.8, 0.8, 1.0]  # Luz principal
+light_specular = [1.0, 1.0, 1.0, 1.0]  # Reflexo especular forte
+
+glLightfv(GL_LIGHT0, GL_AMBIENT, light_ambient)
+glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diffuse)
+glLightfv(GL_LIGHT0, GL_SPECULAR, light_specular)
+
+# Ativar normalização de vetores normais (evita distorções)
+glEnable(GL_NORMALIZE)
+
+# Configurar matriz de projeção
+proj_matrix = build_projection_matrix(K, 1920, 1080)
+glMatrixMode(GL_PROJECTION)
+glLoadMatrixf(np.transpose(proj_matrix))
 
 K_inv = inv_K(K)
 
@@ -269,13 +398,14 @@ window_name = "Locate"
 scale_reduct_inference = 6
 
 clicks = deque(maxlen=5)
+clicks_UTM = deque(maxlen=5)
 # Localizacao carro: [latitude: -22.905551] [longitude: -43.221218] [rel_alt: 2.847 abs_alt: 15.331]
 car_x, car_y, car_zn, car_zl = utm.from_latlon(-22.905551, -43.221218)
 car_z = 15.331 - 2.847
 t_car_mundo = np.array([[car_x],[car_y],[car_z]])
 
 images = []
-while True:
+while not glfw.window_should_close(window):
     ret, image = cap.read()
     if ret:
         images.append(image)
@@ -287,6 +417,10 @@ while True:
     elif key & 0xFF == ord('d'):
         if frame_index + 1 < len(images):
             frame_index += 1
+        continue
+    elif key & 0xFF == ord('f'):
+        if frame_index + 10 < len(images):
+            frame_index += 10
         continue
     elif key & 0xFF == ord('a'):
         frame_index -= 10
@@ -311,43 +445,66 @@ while True:
     t_drone_mundo = np.array([[easting], [northing], [h_abs]])
     print_on_pixel(image, f"index:{frame_index}, N:{int(northing)}, E:{int(easting)}, h_rel:{h}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,0))
 
-    for click in clicks:
-        desenhar_centro(image, click[0], click[1], (255, 0, 0))
-        reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (click[0], click[1]))
-        click_lat_long = find_ground_intersection_UTM(northing, easting, h, reta[1])
-        print_on_pixel(image, f"N:{click_lat_long[0]-car_y}, E:{click_lat_long[1]-car_x}, ZN:{zone_number}, ZL:{zone_letter}", click[0], click[1], (255, 0, 0))
-
-    short_image = cv2.resize(image, (int(original_width / scale_reduct_inference), int(original_height / scale_reduct_inference)))
-    results = client.infer(short_image, model_id=f"{project_id}/{model_version}")
-
-    for prediction in results['predictions']:
-                        
-        width, height = int(prediction['width'] * scale_reduct_inference), int(prediction['height'] * scale_reduct_inference)
-        prediction_x = int(prediction['x'] * scale_reduct_inference)
-        prediction_y = int(prediction['y'] * scale_reduct_inference)
-
-        x, y = int(prediction_x - width/2) , int(prediction_y - height/2)
-        
-        class_id = prediction['class_id']
-
-        # Calculate the bottom right x and y coordinates
-        x2 = int(x + width)
-        y2 = int(y + height)
-
-        if class_id == 0:
-            cv2.rectangle(image, (x, y), (x2, y2), (0, 0, 255), 3)
-            desenhar_centro(image, int(prediction_x), int(prediction_y), (0, 0, 255))
-
-            reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (prediction_x, prediction_y))
-            pred_UTM = find_ground_intersection_UTM(northing, easting, h, reta[1])
-            print_on_pixel(image, f"N:{pred_UTM[0]}, E:{pred_UTM[1]}, ZN:{zone_number}, ZL:{zone_letter}", x, y, (0, 0, 255))
-    
     R = droneToCameraR @ R_drone_T @ mundoToDroneR
     t =  - droneToCameraR @ R_drone_T @ mundoToDroneR @ t_drone_mundo
+    view_matrix = build_view_matrix(cameraToOpenglR @ R, np.array([[0],[0],[0]]))
+    glMatrixMode(GL_MODELVIEW)
+    glLoadMatrixf(np.transpose(view_matrix))
+
+    t_car_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (t_car_mundo - t_drone_mundo)
+
+    render(lambda: draw_cone_sphere(t_car_opengl[0,0], t_car_opengl[1,0], t_car_opengl[2,0], pitch))
+    glfw.poll_events()
+
+    pixels = glReadPixels(0, 0, 1920, 1080, GL_RGB, GL_UNSIGNED_BYTE)
+    image = draw_opengl(pixels, image)
+
+    for click in clicks:
+        # desenhar_centro(image, click[0], click[1], (255, 0, 0))
+        reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (click[0], click[1]))
+        click_UTM = find_ground_intersection_UTM(northing, easting, h, h_abs, reta[1])
+        clicks_UTM.append(click_UTM)
+        # print_on_pixel(image, f"N:{click_lat_long[0]-car_y}, E:{click_lat_long[1]-car_x}, ZN:{zone_number}, ZL:{zone_letter}", click[0], click[1], (255, 0, 0))
+    
+    clicks.clear()
+
+    for utm_click in clicks_UTM:
+        pixel_click = K @ np.concatenate((R, t), axis=1) @ np.vstack((utm_click, [1]))
+        pixel_click = pixel_click.flatten()
+        pixel_click = pixel_click / pixel_click[2]
+        if pixel_click[0] >= 0 and pixel_click[0] <= original_width and pixel_click[1] >= 0 and pixel_click[1] <= original_height:
+            desenhar_centro(image, int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
+            print_on_pixel(image, f"N:{utm_click[1]}, E:{utm_click[0]}, ZN:{zone_number}, ZL:{zone_letter}", int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
+
+    # short_image = cv2.resize(image, (int(original_width / scale_reduct_inference), int(original_height / scale_reduct_inference)))
+    # results = client.infer(short_image, model_id=f"{project_id}/{model_version}")
+
+    # for prediction in results['predictions']:
+                        
+    #     width, height = int(prediction['width'] * scale_reduct_inference), int(prediction['height'] * scale_reduct_inference)
+    #     prediction_x = int(prediction['x'] * scale_reduct_inference)
+    #     prediction_y = int(prediction['y'] * scale_reduct_inference)
+
+    #     x, y = int(prediction_x - width/2) , int(prediction_y - height/2)
+        
+    #     class_id = prediction['class_id']
+
+    #     # Calculate the bottom right x and y coordinates
+    #     x2 = int(x + width)
+    #     y2 = int(y + height)
+
+    #     if class_id == 0:
+    #         cv2.rectangle(image, (x, y), (x2, y2), (0, 0, 255), 3)
+    #         desenhar_centro(image, int(prediction_x), int(prediction_y), (0, 0, 255))
+
+    #         reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (prediction_x, prediction_y))
+    #         pred_UTM = find_ground_intersection_UTM(northing, easting, h, h_abs, reta[1])
+    #         print_on_pixel(image, f"N:{pred_UTM[1]}, E:{pred_UTM[0]}, ZN:{zone_number}, ZL:{zone_letter}", x, y, (0, 0, 255))
+    
     pixel_car = K @ np.concatenate((R, t), axis=1) @ np.vstack((t_car_mundo, [1]))
     pixel_car = pixel_car.flatten()
     pixel_car = pixel_car / pixel_car[2]
-    desenhar_centro(image, int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (255,0,0))
+    desenhar_centro(image, int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
 
     rez_img = cv2.resize(image, (resized_width, resized_height))
     cv2.imshow(window_name, rez_img)
