@@ -302,11 +302,9 @@ def draw_cone_sphere(x, y, z, pitch, color):
     glPopMatrix()
 
 def render(draw_func):
-    
+
     glLoadIdentity()
     draw_func()
-
-    glfw.swap_buffers(window)
 
 def draw_opengl(pixels_opengl, imagem_fundo):
     # Capturar a tela do OpenGL
@@ -400,8 +398,8 @@ window_name = "Locate"
 
 scale_reduct_inference = 6
 
-clicks = deque(maxlen=5)
-clicks_UTM = deque(maxlen=5)
+clicks = deque(maxlen=10)
+clicks_UTM = deque(maxlen=10)
 # Localizacao carro: [latitude: -22.905551] [longitude: -43.221218] [rel_alt: 2.847 abs_alt: 15.331]
 car_x, car_y, car_zn, car_zl = utm.from_latlon(-22.905551, -43.221218)
 car_z = 15.331 - 2.847
@@ -460,7 +458,6 @@ while not glfw.window_should_close(window):
     t_car_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (t_car_mundo - t_drone_mundo + [[0],[0],[cone_height]])
 
     render(lambda: draw_cone_sphere(t_car_opengl[0,0], t_car_opengl[1,0], t_car_opengl[2,0], pitch, "red"))
-    glfw.poll_events()
 
     for click in clicks:
         reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (click[0], click[1]))
@@ -479,7 +476,8 @@ while not glfw.window_should_close(window):
             print_on_pixel(image, f"N:{utm_click[1]}, E:{utm_click[0]}, ZN:{zone_number}, ZL:{zone_letter}", int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
             t_click_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (utm_click - t_drone_mundo + [[0],[0],[cone_height]])
             render(lambda: draw_cone_sphere(t_click_opengl[0,0], t_click_opengl[1,0], t_click_opengl[2,0], pitch, "blue"))
-            glfw.poll_events()
+    glfw.poll_events()
+    glfw.swap_buffers(window)
     
     pixels = glReadPixels(0, 0, 1920, 1080, GL_RGB, GL_UNSIGNED_BYTE)
     image = draw_opengl(pixels, image)
