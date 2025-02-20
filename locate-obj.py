@@ -17,8 +17,10 @@ cameraToMundoR = np.array([[1,0,0],[0,0,1],[0,-1,0]])
 mundoToCameraR = np.transpose(cameraToMundoR)
 cameraToOpenglR = np.array([[1,0,0],[0,-1,0],[0,0,-1]])
 
-near=0.1
-far=1000.0
+near = 0.1
+far = 1000.0
+cone_height = 5.0
+cone_radius = 1.5
 
 def inv_K(K):
     fx = K[0][0]
@@ -131,7 +133,9 @@ def find_ground_intersection(lat, lon, alt, vec):
 def find_ground_intersection_UTM(north, east, alt_rel, alt_abs, vec):
 
     # Descompactar vetor
-    x, y, z = vec
+    x = vec[0,0]
+    y = vec[1,0]
+    z = vec[2,0]
 
     # Evitar divisão por zero no vetor
     if z == 0:
@@ -148,7 +152,7 @@ def find_ground_intersection_UTM(north, east, alt_rel, alt_abs, vec):
     new_north = north + y_t
     new_east = east + x_t
 
-    return new_east, new_north, np.array([alt_abs - alt_rel])
+    return np.array([[new_east], [new_north], [alt_abs - alt_rel]])
 
 def find_ground_intersection_ECEF(lat, lon, alt, vec, earth_radius=6371000):
     """
@@ -235,15 +239,14 @@ def print_on_pixel(image, label, x, y, cor):
     cv2.putText(image, label, (text_x, text_y), font, font_scale, cor, font_thickness)
 
 def mouse_click(event, x, y, flags, param):
-    global clicks
-    global clicks_UTM
+    clicks, clicks_UTM = param
     if event == cv2.EVENT_LBUTTONDOWN:  # Clique com o botão esquerdo
         original_x = int(x * scale_x)
         original_y = int(y * scale_y)
         clicks.append((original_x, original_y))
     elif event == cv2.EVENT_RBUTTONDOWN:  # Clique com o botão direito
-        # clicks.popleft()
-        clicks_UTM.popleft()
+        if (len(clicks_UTM) > 0):
+            clicks_UTM.popleft()
 
 def build_projection_matrix(K, width, height, near=near, far=far):
     """ Converte a matriz K para o formato de projeção do OpenGL. """
@@ -267,22 +270,24 @@ def build_view_matrix(R, t):
     view[:3, :4] = Rt  # Insere [R | t] na matriz 4x4
     return view
 
-def draw_cone_sphere(x, y, z, pitch):
+def draw_cone_sphere(x, y, z, pitch, color):
 
-    # Ativar plano de corte
-    glEnable(GL_CLIP_PLANE0)
-    glClipPlane(GL_CLIP_PLANE0, [0.0, 1.0, 0.0, 0.0])
+    color_array = [0.0, 0.0, 0.0, 1.0]
+    if color == "red":
+        color_array = [1.0, 0.0, 0.0, 1.0]
+    elif color == "blue":
+        color_array = [0.0, 0.0, 1.0, 1.0]
 
     # Esfera vermelha
-    glMaterialfv(GL_FRONT, GL_AMBIENT, [1.0, 0.0, 0.0, 1.0])
-    glMaterialfv(GL_FRONT, GL_DIFFUSE, [1.0, 0.0, 0.0, 1.0])
+    glMaterialfv(GL_FRONT, GL_AMBIENT, color_array)
+    glMaterialfv(GL_FRONT, GL_DIFFUSE, color_array)
     glMaterialfv(GL_FRONT, GL_SPECULAR, [1.0, 1.0, 1.0, 1.0])
     glMaterialf(GL_FRONT, GL_SHININESS, 50.0)
 
     sphere_quadric = gluNewQuadric()
     glPushMatrix()
     glTranslatef(x, y, z)  # **Posicionar no local correto**
-    gluSphere(sphere_quadric, 1.5, 20, 20)
+    gluSphere(sphere_quadric, cone_radius, 20, 20)
     glPopMatrix()
 
     # Desabilitar o plano de corte
@@ -293,16 +298,12 @@ def draw_cone_sphere(x, y, z, pitch):
     glPushMatrix()
     glTranslatef(x, y, z)  # **Mesmo posicionamento para o cone**
     glRotatef(90 - pitch, 1, 0, 0)
-    gluCylinder(cone_quadric, 1.5, 0, 5.0, 20, 20)
+    gluCylinder(cone_quadric, cone_radius, 0, cone_height, 20, 20)
     glPopMatrix()
 
 def render(draw_func):
     
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     glLoadIdentity()
-    
-    glEnable(GL_DEPTH_TEST)
-
     draw_func()
 
     glfw.swap_buffers(window)
@@ -344,6 +345,8 @@ if not glfw.init():
 # Criar janela OpenGL
 window = glfw.create_window(1920, 1080, "Render 3D", None, None)
 glfw.make_context_current(window)
+
+glEnable(GL_DEPTH_TEST)
 
 # Ativar iluminação
 glEnable(GL_LIGHTING)
@@ -406,6 +409,9 @@ t_car_mundo = np.array([[car_x],[car_y],[car_z]])
 
 images = []
 while not glfw.window_should_close(window):
+    
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+
     ret, image = cap.read()
     if ret:
         images.append(image)
@@ -451,31 +457,33 @@ while not glfw.window_should_close(window):
     glMatrixMode(GL_MODELVIEW)
     glLoadMatrixf(np.transpose(view_matrix))
 
-    t_car_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (t_car_mundo - t_drone_mundo)
+    t_car_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (t_car_mundo - t_drone_mundo + [[0],[0],[cone_height]])
 
-    render(lambda: draw_cone_sphere(t_car_opengl[0,0], t_car_opengl[1,0], t_car_opengl[2,0], pitch))
+    render(lambda: draw_cone_sphere(t_car_opengl[0,0], t_car_opengl[1,0], t_car_opengl[2,0], pitch, "red"))
     glfw.poll_events()
 
-    pixels = glReadPixels(0, 0, 1920, 1080, GL_RGB, GL_UNSIGNED_BYTE)
-    image = draw_opengl(pixels, image)
-
     for click in clicks:
-        # desenhar_centro(image, click[0], click[1], (255, 0, 0))
         reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (click[0], click[1]))
         click_UTM = find_ground_intersection_UTM(northing, easting, h, h_abs, reta[1])
         clicks_UTM.append(click_UTM)
-        # print_on_pixel(image, f"N:{click_lat_long[0]-car_y}, E:{click_lat_long[1]-car_x}, ZN:{zone_number}, ZL:{zone_letter}", click[0], click[1], (255, 0, 0))
-    
-    clicks.clear()
 
-    for utm_click in clicks_UTM:
+    clicks.clear()
+    clicks_UTM_copy = clicks_UTM.copy()
+
+    for utm_click in clicks_UTM_copy:
         pixel_click = K @ np.concatenate((R, t), axis=1) @ np.vstack((utm_click, [1]))
         pixel_click = pixel_click.flatten()
         pixel_click = pixel_click / pixel_click[2]
         if pixel_click[0] >= 0 and pixel_click[0] <= original_width and pixel_click[1] >= 0 and pixel_click[1] <= original_height:
             desenhar_centro(image, int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
             print_on_pixel(image, f"N:{utm_click[1]}, E:{utm_click[0]}, ZN:{zone_number}, ZL:{zone_letter}", int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
-
+            t_click_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (utm_click - t_drone_mundo + [[0],[0],[cone_height]])
+            render(lambda: draw_cone_sphere(t_click_opengl[0,0], t_click_opengl[1,0], t_click_opengl[2,0], pitch, "blue"))
+            glfw.poll_events()
+    
+    pixels = glReadPixels(0, 0, 1920, 1080, GL_RGB, GL_UNSIGNED_BYTE)
+    image = draw_opengl(pixels, image)
+    
     # short_image = cv2.resize(image, (int(original_width / scale_reduct_inference), int(original_height / scale_reduct_inference)))
     # results = client.infer(short_image, model_id=f"{project_id}/{model_version}")
 
@@ -505,7 +513,8 @@ while not glfw.window_should_close(window):
     pixel_car = pixel_car.flatten()
     pixel_car = pixel_car / pixel_car[2]
     desenhar_centro(image, int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
+    print_on_pixel(image, f"N:{t_car_mundo[1,0]}, E:{t_car_mundo[0,0]}, ZN:{car_zn}, ZL:{car_zl}", int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
 
     rez_img = cv2.resize(image, (resized_width, resized_height))
     cv2.imshow(window_name, rez_img)
-    cv2.setMouseCallback(window_name, mouse_click)
+    cv2.setMouseCallback(window_name, mouse_click, (clicks, clicks_UTM))
