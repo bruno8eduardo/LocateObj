@@ -405,6 +405,7 @@ car_x, car_y, car_zn, car_zl = utm.from_latlon(-22.905551, -43.221218)
 car_z = 15.331 - 2.847
 t_car_mundo = np.array([[car_x],[car_y],[car_z]])
 
+play = True
 images = []
 while not glfw.window_should_close(window):
     
@@ -413,7 +414,8 @@ while not glfw.window_should_close(window):
     ret, image = cap.read()
     if ret:
         images.append(image)
-        frame_index += 1
+        if play:
+            frame_index += 1
 
     key = cv2.waitKey(1)
     if key & 0xFF == ord('q'):
@@ -431,6 +433,8 @@ while not glfw.window_should_close(window):
         if frame_index < 1:
             frame_index = 1
         continue
+    elif key & 0xFF == ord(' '):
+        play = not play
     
     image = images[frame_index - 1 if frame_index > 0 else 0]
 
@@ -473,7 +477,7 @@ while not glfw.window_should_close(window):
         pixel_click = pixel_click / pixel_click[2]
         if pixel_click[0] >= 0 and pixel_click[0] <= original_width and pixel_click[1] >= 0 and pixel_click[1] <= original_height:
             desenhar_centro(image, int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
-            print_on_pixel(image, f"N:{utm_click[1]}, E:{utm_click[0]}, ZN:{zone_number}, ZL:{zone_letter}", int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
+            print_on_pixel(image, f"N:{utm_click[1,0]}, E:{utm_click[0,0]}, ZN:{zone_number}, ZL:{zone_letter}", int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
             t_click_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (utm_click - t_drone_mundo + [[0],[0],[cone_height]])
             render(lambda: draw_cone_sphere(t_click_opengl[0,0], t_click_opengl[1,0], t_click_opengl[2,0], pitch, "blue"))
     glfw.poll_events()
