@@ -436,7 +436,7 @@ while not glfw.window_should_close(window):
     elif key & 0xFF == ord(' '):
         play = not play
     
-    image = images[frame_index - 1 if frame_index > 0 else 0]
+    image = images[frame_index - 1 if frame_index > 0 else 0].copy()
 
     yaw = float(frame_info[frame_index]['gb_yaw'])
     pitch = float(frame_info[frame_index]['gb_pitch'])
