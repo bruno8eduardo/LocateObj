@@ -4,10 +4,10 @@ import numpy as np
 import re
 from collections import deque
 import json
-import utm
 import glfw
 from OpenGL.GL import *
 from OpenGL.GLU import *
+import pymap3d.enu as enu
 
 droneToMundoR = np.array([[0,1,0],[1,0,0],[0,0,-1]])
 mundoToDroneR = np.transpose(droneToMundoR)
@@ -16,6 +16,10 @@ droneToCameraR = np.transpose(cameraToDroneR)
 cameraToMundoR = np.array([[1,0,0],[0,0,1],[0,-1,0]])
 mundoToCameraR = np.transpose(cameraToMundoR)
 cameraToOpenglR = np.array([[1,0,0],[0,-1,0],[0,0,-1]])
+
+lat0 = -22.905812 
+lon0 = -43.221329
+h0 = 12.456
 
 near = 0.1
 far = 1000.0
@@ -154,6 +158,30 @@ def find_ground_intersection_UTM(north, east, alt_rel, alt_abs, vec):
 
     return np.array([[new_east], [new_north], [alt_abs - alt_rel]])
 
+def find_ground_intersection_ENU(north, east, alt, vec):
+
+    # Descompactar vetor
+    x = vec[0,0]
+    y = vec[1,0]
+    z = vec[2,0]
+
+    # Evitar divisão por zero no vetor
+    if z == 0:
+        raise ValueError("O vetor é paralelo ao solo e nunca tocará o chão.")
+
+    # Calcular t (tempo escalar para atingir o solo)
+    t = -alt / z
+
+    # Coordenadas deslocadas no plano cartesiano
+    x_t = t * x
+    y_t = t * y
+
+    # Conversão de deslocamento
+    new_north = north + y_t
+    new_east = east + x_t
+
+    return np.array([[new_east], [new_north], [0]])
+
 def find_ground_intersection_ECEF(lat, lon, alt, vec, earth_radius=6371000):
     """
     Encontra a latitude e longitude onde o vetor atinge o solo, considerando a curvatura da Terra.
@@ -277,6 +305,8 @@ def draw_cone_sphere(x, y, z, pitch, color):
         color_array = [1.0, 0.0, 0.0, 1.0]
     elif color == "blue":
         color_array = [0.0, 0.0, 1.0, 1.0]
+    elif color == "black":
+        color_array = [0.1, 0.1, 0.1, 1.0]
 
     # Esfera vermelha
     glMaterialfv(GL_FRONT, GL_AMBIENT, color_array)
@@ -400,9 +430,9 @@ scale_reduct_inference = 6
 
 clicks = deque(maxlen=10)
 clicks_UTM = deque(maxlen=10)
+
 # Localizacao carro: [latitude: -22.905551] [longitude: -43.221218] [rel_alt: 2.847 abs_alt: 15.331]
-car_x, car_y, car_zn, car_zl = utm.from_latlon(-22.905551, -43.221218)
-car_z = 15.331 - 2.847
+car_x, car_y, car_z = enu.geodetic2enu(-22.905551, -43.221218, 15.331 - 2.847, lat0, lon0, h0)
 t_car_mundo = np.array([[car_x],[car_y],[car_z]])
 
 play = True
@@ -449,8 +479,8 @@ while not glfw.window_should_close(window):
     lat = float(frame_info[frame_index]['latitude'])
     long = float(frame_info[frame_index]['longitude'])
 
-    easting, northing, zone_number, zone_letter = utm.from_latlon(lat, long)
-    t_drone_mundo = np.array([[easting], [northing], [h_abs]])
+    easting, northing, h_enu = enu.geodetic2enu(lat, long, h_abs, lat0, lon0, h0)
+    t_drone_mundo = np.array([[easting], [northing], [h_enu]])
     print_on_pixel(image, f"index:{frame_index}, N:{int(northing)}, E:{int(easting)}, h_rel:{h}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,0))
 
     R = droneToCameraR @ R_drone_T @ mundoToDroneR
@@ -459,13 +489,25 @@ while not glfw.window_should_close(window):
     glMatrixMode(GL_MODELVIEW)
     glLoadMatrixf(np.transpose(view_matrix))
 
+    pixel_car = K @ np.concatenate((R, t), axis=1) @ np.vstack((t_car_mundo, [1]))
+    pixel_car = pixel_car.flatten()
+    pixel_car = pixel_car / pixel_car[2]
+    desenhar_centro(image, int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
+    print_on_pixel(image, f"N:{t_car_mundo[1,0]}, E:{t_car_mundo[0,0]}", int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
     t_car_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (t_car_mundo - t_drone_mundo + [[0],[0],[cone_height]])
-
     render(lambda: draw_cone_sphere(t_car_opengl[0,0], t_car_opengl[1,0], t_car_opengl[2,0], pitch, "red"))
+
+    pixel_zero = K @ np.concatenate((R, t), axis=1) @ np.array([[0],[0],[0],[1]])
+    pixel_zero = pixel_zero.flatten()
+    pixel_zero = pixel_zero / pixel_zero[2]
+    desenhar_centro(image, int(pixel_zero[0] / scale_x), int(pixel_zero[1] / scale_y), (0,0,0))
+    print_on_pixel(image, "N:0, E:0", int(pixel_zero[0] / scale_x), int(pixel_zero[1] / scale_y), (0,0,0))
+    t_zero_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (- t_drone_mundo + [[0],[0],[cone_height]])
+    render(lambda: draw_cone_sphere(t_zero_opengl[0,0], t_zero_opengl[1,0], t_zero_opengl[2,0], pitch, "black"))
 
     for click in clicks:
         reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (click[0], click[1]))
-        click_UTM = find_ground_intersection_UTM(northing, easting, h, h_abs, reta[1])
+        click_UTM = find_ground_intersection_ENU(northing, easting, h_enu, reta[1])
         clicks_UTM.append(click_UTM)
 
     clicks.clear()
@@ -477,7 +519,7 @@ while not glfw.window_should_close(window):
         pixel_click = pixel_click / pixel_click[2]
         if pixel_click[0] >= 0 and pixel_click[0] <= original_width and pixel_click[1] >= 0 and pixel_click[1] <= original_height:
             desenhar_centro(image, int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
-            print_on_pixel(image, f"N:{utm_click[1,0]}, E:{utm_click[0,0]}, ZN:{zone_number}, ZL:{zone_letter}", int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
+            print_on_pixel(image, f"N:{utm_click[1,0]}, E:{utm_click[0,0]}", int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
             t_click_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (utm_click - t_drone_mundo + [[0],[0],[cone_height]])
             render(lambda: draw_cone_sphere(t_click_opengl[0,0], t_click_opengl[1,0], t_click_opengl[2,0], pitch, "blue"))
     glfw.poll_events()
@@ -511,12 +553,6 @@ while not glfw.window_should_close(window):
     #         pred_UTM = find_ground_intersection_UTM(northing, easting, h, h_abs, reta[1])
     #         print_on_pixel(image, f"N:{pred_UTM[1]}, E:{pred_UTM[0]}, ZN:{zone_number}, ZL:{zone_letter}", x, y, (0, 0, 255))
     
-    pixel_car = K @ np.concatenate((R, t), axis=1) @ np.vstack((t_car_mundo, [1]))
-    pixel_car = pixel_car.flatten()
-    pixel_car = pixel_car / pixel_car[2]
-    desenhar_centro(image, int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
-    print_on_pixel(image, f"N:{t_car_mundo[1,0]}, E:{t_car_mundo[0,0]}, ZN:{car_zn}, ZL:{car_zl}", int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
-
     rez_img = cv2.resize(image, (resized_width, resized_height))
     cv2.imshow(window_name, rez_img)
     cv2.setMouseCallback(window_name, mouse_click, (clicks, clicks_UTM))
