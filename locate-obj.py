@@ -8,6 +8,8 @@ import glfw
 from OpenGL.GL import *
 from OpenGL.GLU import *
 import pymap3d.enu as enu
+import tkinter as tk
+from tkinter import simpledialog
 
 droneToMundoR = np.array([[0,1,0],[1,0,0],[0,0,-1]])
 mundoToDroneR = np.transpose(droneToMundoR)
@@ -25,6 +27,29 @@ near = 0.1
 far = 1000.0
 cone_height = 5.0
 cone_radius = 1.5
+
+minimal_distance_param = 0.01
+
+roi_minimum_confidence = 0.65
+
+# R x = b
+def get_rotation_from_vectors(x, b):
+    x_norm = x.flatten() / np.linalg.norm(x)
+    b_norm = b.flatten() / np.linalg.norm(b)
+    v = np.cross(x_norm, b_norm)
+    v = v / np.linalg.norm(v)
+    theta = np.arccos(np.clip(np.dot(x_norm, b_norm), -1.0, 1.0))
+    rot_vec = theta * v
+    R, _ = cv2.Rodrigues(rot_vec)
+    return R, rot_vec
+
+def get_roi_data():
+    root = tk.Tk()
+    root.withdraw()
+    lat_roi = simpledialog.askfloat("Entrada de dados", "Insira LATITUDE do ROI: ")
+    long_roi = simpledialog.askfloat("Entrada de dados", "Insira LONGITUDE do ROI: ")
+    h_abs_roi = simpledialog.askfloat("Entrada de dados", "Insira ALTITUDE do ROI em relação ao nível do mar: ")
+    return lat_roi, long_roi, h_abs_roi
 
 def inv_K(K):
     fx = K[0][0]
@@ -305,6 +330,8 @@ def draw_cone_sphere(x, y, z, pitch, color):
         color_array = [1.0, 0.0, 0.0, 1.0]
     elif color == "blue":
         color_array = [0.0, 0.0, 1.0, 1.0]
+    elif color == "green":
+        color_array = [0.0, 1.0, 0.0, 1.0]
     elif color == "black":
         color_array = [0.1, 0.1, 0.1, 1.0]
 
@@ -358,6 +385,31 @@ def draw_opengl(pixels_opengl, imagem_fundo):
     # Combinar as duas imagens corretamente
     resultado = cv2.add(fundo_com_buraco, objetos_renderizados)
     return resultado
+
+def get_homography(frame_base, frame_obj, detector, matcher):
+    kp_base, des_base = detector.detectAndCompute(frame_base, None)
+    kp_obj, des_obj = detector.detectAndCompute(frame_obj, None)
+    
+    matches = matcher.match(des_base, des_obj)
+    matches = sorted(matches, key=lambda x: x.distance)
+    num_matches = 50
+    matches = matches[:num_matches]
+
+    src_pts = np.float32([kp_base[m.queryIdx].pt for m in matches]).reshape(-1,1,2)
+    dst_pts = np.float32([kp_obj[m.trainIdx].pt for m in matches]).reshape(-1,1,2)
+
+    H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+
+    return H
+
+def distance_is_minimal(east_0, north_0, h_0, east_1, north_1, h_1):
+    point_0 = np.array([east_0, north_0, h_0])
+    point_1 = np.array([east_1, north_1, h_1])
+    distance = np.linalg.norm(point_1 - point_0)
+    if distance < h_1 * minimal_distance_param:
+        return True
+    else:
+        return False
 
 with open("parameters.json", "r") as json_file:
     parameters = json.load(json_file)
@@ -426,6 +478,16 @@ scale_x = original_width / resized_width
 scale_y = original_height / resized_height
 window_name = "Locate"
 
+# # Homography stuff
+# frame_gap = 10
+# orb = cv2.ORB_create(nfeatures=1000)
+# bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+
+get_roi = False
+image_roi_gray = None
+roi_data = None
+roi_pixel = None
+
 scale_reduct_inference = 6
 
 clicks = deque(maxlen=10)
@@ -463,10 +525,14 @@ while not glfw.window_should_close(window):
         if frame_index < 1:
             frame_index = 1
         continue
+    elif key & 0xFF == ord('s'):
+        get_roi = True
+        continue
     elif key & 0xFF == ord(' '):
         play = not play
     
     image = images[frame_index - 1 if frame_index > 0 else 0].copy()
+    image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
     yaw = float(frame_info[frame_index]['gb_yaw'])
     pitch = float(frame_info[frame_index]['gb_pitch'])
@@ -480,29 +546,105 @@ while not glfw.window_should_close(window):
     long = float(frame_info[frame_index]['longitude'])
 
     easting, northing, h_enu = enu.geodetic2enu(lat, long, h_abs, lat0, lon0, h0)
+
+    # # Homography stuff
+    # R_alt = None
+    # homography_index = frame_index - frame_gap if frame_index > frame_gap + 1 else None
+    # if homography_index is not None:
+    #     image_base = images[homography_index - 1].copy()
+    #     lat_base = float(frame_info[homography_index]['latitude'])
+    #     long_base = float(frame_info[homography_index]['longitude'])
+    #     h_abs_base = float(frame_info[homography_index]['abs_alt'])
+    #     yaw_base = float(frame_info[homography_index]['gb_yaw'])
+    #     pitch_base = float(frame_info[homography_index]['gb_pitch'])
+    #     roll_base = float(frame_info[homography_index]['gb_roll'])
+
+    #     R_drone_base = yaw_pitch_roll_to_rotation_matrix(yaw_base, pitch_base, roll_base)
+    #     R_drone_base_T = np.transpose(R_drone_base)
+    #     easting_base, northing_base, h_enu_base = enu.geodetic2enu(lat_base, long_base, h_abs_base, lat0, lon0, h0)
+        
+    #     if distance_is_minimal(easting_base, northing_base, h_enu_base, easting, northing, h_enu):
+    #         image_base_gray = cv2.cvtColor(image_base, cv2.COLOR_BGR2GRAY)
+    #         H = get_homography(image_base_gray, image_gray, orb, bf)
+    #         R_hom = K_inv @ H @ K
+    #         R_alt = R_hom @ droneToCameraR @ R_drone_base_T @ mundoToDroneR
+
     t_drone_mundo = np.array([[easting], [northing], [h_enu]])
     print_on_pixel(image, f"index:{frame_index}, N:{int(northing)}, E:{int(easting)}, h_rel:{h}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,0))
 
     R = droneToCameraR @ R_drone_T @ mundoToDroneR
-    t =  - droneToCameraR @ R_drone_T @ mundoToDroneR @ t_drone_mundo
+    t =  - R @ t_drone_mundo
     view_matrix = build_view_matrix(cameraToOpenglR @ R, np.array([[0],[0],[0]]))
     glMatrixMode(GL_MODELVIEW)
     glLoadMatrixf(np.transpose(view_matrix))
 
+    if get_roi:
+        roi = cv2.selectROI("Select ROI", image)
+        cv2.destroyWindow("Select ROI")
+        x, y, w, h = roi
+        image_roi = image[y:y+h, x:x+w]
+        image_roi_gray = cv2.cvtColor(image_roi, cv2.COLOR_BGR2GRAY)
+        roi_data = get_roi_data()
+        get_roi = False
+    
+    if image_roi_gray is not None:
+        templ_match = cv2.matchTemplate(image_gray, image_roi_gray, cv2.TM_CCOEFF_NORMED)
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(templ_match)
+        w, h = image_roi_gray.shape[::-1]
+        roi_x = max_loc[0] + w/2
+        roi_y = max_loc[1] + h/2
+        roi_pixel = np.array([[roi_x], [roi_y], [1]])
+        desenhar_centro(image, int(roi_x), int(roi_y), (0, 255, 0))
+        print_on_pixel(image, f"Confianca: {max_val}", int(roi_x), int(roi_y), (0, 255, 0))
+        
+        if max_val > roi_minimum_confidence:
+            lat_roi, long_roi, h_abs_roi = roi_data
+            easting_roi, northing_roi, h_enu_roi = enu.geodetic2enu(lat_roi, long_roi, h_abs_roi, lat0, lon0, h0)
+            roi_enu = np.array([[easting_roi],[northing_roi],[h_enu_roi]])
+            lambd = np.linalg.norm(roi_enu - t_drone_mundo) / np.linalg.norm(K_inv @ roi_pixel)
+            R_1, rot_vec_1 = get_rotation_from_vectors(roi_enu - t_drone_mundo, lambd * K_inv @ roi_pixel)
+            R_2, rot_vec_2 = get_rotation_from_vectors(roi_enu - t_drone_mundo, - lambd * K_inv @ roi_pixel)
+            R_T = np.transpose(R)
+            trace_1 = np.trace(R_T @ R_1)
+            trace_2 = np.trace(R_T @ R_2)
+            diff_1 = np.arccos(np.clip((trace_1 - 1) / 2, -1.0, 1.0))
+            diff_2 = np.arccos(np.clip((trace_2 - 1) / 2, -1.0, 1.0))
+            if diff_1 < diff_2:
+                R_corr = R_1
+            else:
+                R_corr = R_2
+            t_roi_opengl = cameraToOpenglR @ R_corr @ (roi_enu - t_drone_mundo + [[0],[0],[cone_height]])
+            render(lambda: draw_cone_sphere(t_roi_opengl[0,0], t_roi_opengl[1,0], t_roi_opengl[2,0], pitch, "green"))
+        else:
+            R_corr = None
+
+    # Carro
     pixel_car = K @ np.concatenate((R, t), axis=1) @ np.vstack((t_car_mundo, [1]))
     pixel_car = pixel_car.flatten()
     pixel_car = pixel_car / pixel_car[2]
     desenhar_centro(image, int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
     print_on_pixel(image, f"N:{t_car_mundo[1,0]}, E:{t_car_mundo[0,0]}", int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
-    t_car_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (t_car_mundo - t_drone_mundo + [[0],[0],[cone_height]])
+    t_car_opengl = cameraToOpenglR @ R @ (t_car_mundo - t_drone_mundo + [[0],[0],[cone_height]])
     render(lambda: draw_cone_sphere(t_car_opengl[0,0], t_car_opengl[1,0], t_car_opengl[2,0], pitch, "red"))
 
+    # # Homography stuff
+    # if R_alt is not None:
+    #     pixel_car_alt = K @ np.concatenate((R_alt, - R_alt @ t_drone_mundo), axis=1) @ np.vstack((t_car_mundo, [1]))
+    #     pixel_car_alt = pixel_car_alt.flatten()
+    #     pixel_car_alt = pixel_car_alt / pixel_car_alt[2]
+    #     desenhar_centro(image, int(pixel_car_alt[0] / scale_x), int(pixel_car_alt[1] / scale_y), (255,0,0))
+    #     print_on_pixel(image, f"N:{t_car_mundo[1,0]}, E:{t_car_mundo[0,0]}", int(pixel_car_alt[0] / scale_x), int(pixel_car_alt[1] / scale_y), (255,0,0))
+    #     t_car_opengl_alt = cameraToOpenglR @ R_alt @ (t_car_mundo - t_drone_mundo + [[0],[0],[cone_height]])
+    #     render(lambda: draw_cone_sphere(t_car_opengl_alt[0,0], t_car_opengl_alt[1,0], t_car_opengl_alt[2,0], pitch, "blue"))
+
+
+    # Origem coordenada ENU
     pixel_zero = K @ np.concatenate((R, t), axis=1) @ np.array([[0],[0],[0],[1]])
     pixel_zero = pixel_zero.flatten()
     pixel_zero = pixel_zero / pixel_zero[2]
     desenhar_centro(image, int(pixel_zero[0] / scale_x), int(pixel_zero[1] / scale_y), (0,0,0))
     print_on_pixel(image, "N:0, E:0", int(pixel_zero[0] / scale_x), int(pixel_zero[1] / scale_y), (0,0,0))
-    t_zero_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (- t_drone_mundo + [[0],[0],[cone_height]])
+    t_zero_opengl = cameraToOpenglR @ R @ (- t_drone_mundo + [[0],[0],[cone_height]])
     render(lambda: draw_cone_sphere(t_zero_opengl[0,0], t_zero_opengl[1,0], t_zero_opengl[2,0], pitch, "black"))
 
     for click in clicks:
@@ -520,7 +662,7 @@ while not glfw.window_should_close(window):
         if pixel_click[0] >= 0 and pixel_click[0] <= original_width and pixel_click[1] >= 0 and pixel_click[1] <= original_height:
             desenhar_centro(image, int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
             print_on_pixel(image, f"N:{utm_click[1,0]}, E:{utm_click[0,0]}", int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
-            t_click_opengl = cameraToOpenglR @ droneToCameraR @ R_drone_T @ mundoToDroneR @ (utm_click - t_drone_mundo + [[0],[0],[cone_height]])
+            t_click_opengl = cameraToOpenglR @ R @ (utm_click - t_drone_mundo + [[0],[0],[cone_height]])
             render(lambda: draw_cone_sphere(t_click_opengl[0,0], t_click_opengl[1,0], t_click_opengl[2,0], pitch, "blue"))
     glfw.poll_events()
     glfw.swap_buffers(window)
@@ -528,6 +670,7 @@ while not glfw.window_should_close(window):
     pixels = glReadPixels(0, 0, 1920, 1080, GL_RGB, GL_UNSIGNED_BYTE)
     image = draw_opengl(pixels, image)
     
+    # # IA detection stuff
     # short_image = cv2.resize(image, (int(original_width / scale_reduct_inference), int(original_height / scale_reduct_inference)))
     # results = client.infer(short_image, model_id=f"{project_id}/{model_version}")
 
