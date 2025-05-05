@@ -10,6 +10,8 @@ from OpenGL.GLU import *
 import pymap3d.enu as enu
 import tkinter as tk
 from tkinter import simpledialog
+import rasterio
+import utm
 
 droneToMundoR = np.array([[0,1,0],[1,0,0],[0,0,-1]])
 mundoToDroneR = np.transpose(droneToMundoR)
@@ -22,6 +24,9 @@ cameraToOpenglR = np.array([[1,0,0],[0,-1,0],[0,0,-1]])
 lat0 = -22.905812 
 lon0 = -43.221329
 h0 = 12.456
+utm0_x, utm0_y, utm_zn, utm_zl = utm.from_latlon(lat0, lon0)
+
+dem_interception_epsilon = 0.1
 
 near = 0.1
 far = 1000.0
@@ -136,6 +141,18 @@ def yaw_pitch_roll_to_rotation_matrix(yaw, pitch, roll):
     # Matriz de rotação composta: R = Rz * Ry * Rx
     R = Rz @ Ry @ Rx
     return R
+
+def find_DEM_intersection(utm_east, utm_north, utm_up, vec_flat_norm):
+    alt = get_DEM_alt(utm_east, utm_north)
+    if alt is not None:
+        gap = utm_up - alt
+        if np.abs(gap) > dem_interception_epsilon:
+            vec = gap * vec_flat_norm
+            return find_DEM_intersection(utm_east - vec[0], utm_north - vec[1], utm_up - vec[2], vec_flat_norm)
+        else:
+            return np.array([[utm_east], [utm_north], [utm_up]])
+    else:
+        return None
 
 def find_ground_intersection(lat, lon, alt, vec):
 
@@ -292,14 +309,14 @@ def print_on_pixel(image, label, x, y, cor):
     cv2.putText(image, label, (text_x, text_y), font, font_scale, cor, font_thickness)
 
 def mouse_click(event, x, y, flags, param):
-    clicks, clicks_UTM = param
+    clicks, clicks_ENU = param
     if event == cv2.EVENT_LBUTTONDOWN:  # Clique com o botão esquerdo
         original_x = int(x * scale_x)
         original_y = int(y * scale_y)
         clicks.append((original_x, original_y))
     elif event == cv2.EVENT_RBUTTONDOWN:  # Clique com o botão direito
-        if (len(clicks_UTM) > 0):
-            clicks_UTM.popleft()
+        if (len(clicks_ENU) > 0):
+            clicks_ENU.popleft()
 
 def build_projection_matrix(K, width, height, near=near, far=far):
     """ Converte a matriz K para o formato de projeção do OpenGL. """
@@ -411,12 +428,33 @@ def distance_is_minimal(east_0, north_0, h_0, east_1, north_1, h_1):
     else:
         return False
 
+def get_DEM_alt(east_utm, north_utm):
+    row, col = ~dem_transform * (east_utm, north_utm)
+    row = int(round(row))
+    col = int(round(col))
+    if 0 <= row < dem_elevation_data.shape[0] and 0 <= col < dem_elevation_data.shape[1]:
+        return dem_elevation_data[row, col]
+    else:
+        return None  # Fora da imagem
+
 with open("parameters.json", "r") as json_file:
     parameters = json.load(json_file)
 
 K_path = parameters["K_path"]
 with open(K_path, "r") as json_file:
     K = np.array(json.load(json_file), dtype=np.float64)
+
+tif_path = parameters["tif_path"]
+with rasterio.open(tif_path) as dem_dataset:
+    dem_elevation_data = dem_dataset.read(1)
+    dem_transform = dem_dataset.transform
+    dem_crs = dem_dataset.crs
+
+h0_dem = get_DEM_alt(utm0_x, utm0_y)
+if h0_dem is not None:
+    h_dem_offset = h0 - h0_dem
+else:
+    raise Exception("Origem do sistema de coordenadas fora do mapa de elevação carregado!")
 
 # Inicializar GLFW
 if not glfw.init():
@@ -491,7 +529,7 @@ roi_pixel = None
 scale_reduct_inference = 6
 
 clicks = deque(maxlen=10)
-clicks_UTM = deque(maxlen=10)
+clicks_ENU = deque(maxlen=10)
 
 # Localizacao carro: [latitude: -22.905551] [longitude: -43.221218] [rel_alt: 2.847 abs_alt: 15.331]
 car_x, car_y, car_z = enu.geodetic2enu(-22.905551, -43.221218, 15.331 - 2.847, lat0, lon0, h0)
@@ -614,6 +652,9 @@ while not glfw.window_should_close(window):
             else:
                 R_corr = R_2
             t_roi_opengl = cameraToOpenglR @ R_corr @ (roi_enu - t_drone_mundo + [[0],[0],[cone_height]])
+            view_matrix_corr = build_view_matrix(cameraToOpenglR @ R_corr, np.array([[0],[0],[0]]))
+            glMatrixMode(GL_MODELVIEW)
+            glLoadMatrixf(np.transpose(view_matrix_corr))
             render(lambda: draw_cone_sphere(t_roi_opengl[0,0], t_roi_opengl[1,0], t_roi_opengl[2,0], pitch, "green"))
         else:
             R_corr = None
@@ -625,6 +666,8 @@ while not glfw.window_should_close(window):
     desenhar_centro(image, int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
     print_on_pixel(image, f"N:{t_car_mundo[1,0]}, E:{t_car_mundo[0,0]}", int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
     t_car_opengl = cameraToOpenglR @ R @ (t_car_mundo - t_drone_mundo + [[0],[0],[cone_height]])
+    glMatrixMode(GL_MODELVIEW)
+    glLoadMatrixf(np.transpose(view_matrix))
     render(lambda: draw_cone_sphere(t_car_opengl[0,0], t_car_opengl[1,0], t_car_opengl[2,0], pitch, "red"))
 
     # # Homography stuff
@@ -645,24 +688,37 @@ while not glfw.window_should_close(window):
     desenhar_centro(image, int(pixel_zero[0] / scale_x), int(pixel_zero[1] / scale_y), (0,0,0))
     print_on_pixel(image, "N:0, E:0", int(pixel_zero[0] / scale_x), int(pixel_zero[1] / scale_y), (0,0,0))
     t_zero_opengl = cameraToOpenglR @ R @ (- t_drone_mundo + [[0],[0],[cone_height]])
+    glMatrixMode(GL_MODELVIEW)
+    glLoadMatrixf(np.transpose(view_matrix))
     render(lambda: draw_cone_sphere(t_zero_opengl[0,0], t_zero_opengl[1,0], t_zero_opengl[2,0], pitch, "black"))
 
     for click in clicks:
         reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (click[0], click[1]))
-        click_UTM = find_ground_intersection_ENU(northing, easting, h_enu, reta[1])
-        clicks_UTM.append(click_UTM)
+        # click_ENU = find_ground_intersection_ENU(northing, easting, h_enu, reta[1])
+        vec_DEM = reta[1].flatten()
+        vec_DEM = vec_DEM / np.linalg.norm(vec_DEM)
+        if vec_DEM[2] < 0:
+            vec_DEM = (-1) * vec_DEM
+        click_ENU = find_DEM_intersection(easting + utm0_x, northing + utm0_y, h_abs - h_dem_offset, vec_DEM)
+        if click_ENU is not None:
+            click_ENU[0,0] -= utm0_x
+            click_ENU[1,0] -= utm0_y
+            click_ENU[2,0] += h_dem_offset - h0
+            clicks_ENU.append(click_ENU)
 
     clicks.clear()
-    clicks_UTM_copy = clicks_UTM.copy()
+    clicks_ENU_copy = clicks_ENU.copy()
 
-    for utm_click in clicks_UTM_copy:
-        pixel_click = K @ np.concatenate((R, t), axis=1) @ np.vstack((utm_click, [1]))
+    for enu_click in clicks_ENU_copy:
+        pixel_click = K @ np.concatenate((R, t), axis=1) @ np.vstack((enu_click, [1]))
         pixel_click = pixel_click.flatten()
         pixel_click = pixel_click / pixel_click[2]
         if pixel_click[0] >= 0 and pixel_click[0] <= original_width and pixel_click[1] >= 0 and pixel_click[1] <= original_height:
             desenhar_centro(image, int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
-            print_on_pixel(image, f"N:{utm_click[1,0]}, E:{utm_click[0,0]}", int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
-            t_click_opengl = cameraToOpenglR @ R @ (utm_click - t_drone_mundo + [[0],[0],[cone_height]])
+            print_on_pixel(image, f"N:{enu_click[1,0]}, E:{enu_click[0,0]}", int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
+            t_click_opengl = cameraToOpenglR @ R @ (enu_click - t_drone_mundo + [[0],[0],[cone_height]])
+            glMatrixMode(GL_MODELVIEW)
+            glLoadMatrixf(np.transpose(view_matrix))
             render(lambda: draw_cone_sphere(t_click_opengl[0,0], t_click_opengl[1,0], t_click_opengl[2,0], pitch, "blue"))
     glfw.poll_events()
     glfw.swap_buffers(window)
@@ -698,4 +754,4 @@ while not glfw.window_should_close(window):
     
     rez_img = cv2.resize(image, (resized_width, resized_height))
     cv2.imshow(window_name, rez_img)
-    cv2.setMouseCallback(window_name, mouse_click, (clicks, clicks_UTM))
+    cv2.setMouseCallback(window_name, mouse_click, (clicks, clicks_ENU))
