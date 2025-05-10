@@ -319,7 +319,6 @@ def mouse_click(event, x, y, flags, param):
             clicks_ENU.popleft()
 
 def build_projection_matrix(K, width, height, near=near, far=far):
-    """ Converte a matriz K para o formato de projeção do OpenGL. """
     fx, fy = K[0, 0], K[1, 1]
     cx, cy = K[0, 2], K[1, 2]
 
@@ -327,7 +326,7 @@ def build_projection_matrix(K, width, height, near=near, far=far):
     proj[0, 0] = 2 * fx / width
     proj[1, 1] = 2 * fy / height
     proj[0, 2] = 1 - (2 * cx / width)
-    proj[1, 2] = (2 * cy / height) - 1
+    proj[1, 2] = 1 - (2 * cy / height)
     proj[2, 2] = -(far + near) / (far - near)
     proj[2, 3] = -2 * far * near / (far - near)
     proj[3, 2] = -1
@@ -335,7 +334,8 @@ def build_projection_matrix(K, width, height, near=near, far=far):
 
 def build_view_matrix(R, t):
     """ Converte R e t para uma matriz de visualização do OpenGL. """
-    Rt = np.concatenate((R, t), axis=1)
+    R_T = np.transpose(R)
+    Rt = np.concatenate((R_T, -R_T @ t), axis=1)
     view = np.eye(4)  # Matriz identidade 4x4
     view[:3, :4] = Rt  # Insere [R | t] na matriz 4x4
     return view
@@ -614,7 +614,7 @@ while not glfw.window_should_close(window):
     t =  - R @ t_drone_mundo
     view_matrix = build_view_matrix(cameraToOpenglR @ R, np.array([[0],[0],[0]]))
     glMatrixMode(GL_MODELVIEW)
-    glLoadMatrixf(np.transpose(view_matrix))
+    glLoadMatrixf(view_matrix)
 
     if get_roi:
         roi = cv2.selectROI("Select ROI", image)
@@ -654,7 +654,7 @@ while not glfw.window_should_close(window):
             t_roi_opengl = cameraToOpenglR @ R_corr @ (roi_enu - t_drone_mundo + [[0],[0],[cone_height]])
             view_matrix_corr = build_view_matrix(cameraToOpenglR @ R_corr, np.array([[0],[0],[0]]))
             glMatrixMode(GL_MODELVIEW)
-            glLoadMatrixf(np.transpose(view_matrix_corr))
+            glLoadMatrixf(view_matrix_corr)
             render(lambda: draw_cone_sphere(t_roi_opengl[0,0], t_roi_opengl[1,0], t_roi_opengl[2,0], pitch, "green"))
         else:
             R_corr = None
