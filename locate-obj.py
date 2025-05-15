@@ -26,7 +26,7 @@ lon0 = -43.221329
 h0 = 12.456
 utm0_x, utm0_y, utm_zn, utm_zl = utm.from_latlon(lat0, lon0)
 
-dem_interception_epsilon = 0.05
+dem_interception_epsilon = 0.1
 
 near = 0.1
 far = 1000.0
@@ -216,9 +216,9 @@ def find_ground_intersection_UTM(north, east, alt_rel, alt_abs, vec):
 def find_ground_intersection_ENU(north, east, alt, vec):
 
     # Descompactar vetor
-    x = vec[0,0]
-    y = vec[1,0]
-    z = vec[2,0]
+    x = vec[0]
+    y = vec[1]
+    z = vec[2]
 
     # Evitar divisão por zero no vetor
     if z == 0:
@@ -514,17 +514,22 @@ K_path = parameters["K_path"]
 with open(K_path, "r") as json_file:
     K = np.array(json.load(json_file), dtype=np.float64)
 
-tif_path = parameters["tif_path"]
-with rasterio.open(tif_path) as dem_dataset:
-    dem_elevation_data = dem_dataset.read(1)
-    dem_transform = dem_dataset.transform
-    dem_crs = dem_dataset.crs
+dem_elevation_data = None
+try:
+    tif_path = parameters["tif_path"]
+    with rasterio.open(tif_path) as dem_dataset:
+        dem_elevation_data = dem_dataset.read(1)
+        dem_transform = dem_dataset.transform
+        dem_crs = dem_dataset.crs
+except Exception as e:
+    print(f"Error: {e}\nConsidering flat terrain...")
 
-h0_dem = get_DEM_alt(utm0_x, utm0_y)
-if h0_dem is not None:
-    h_dem_offset = h0 - h0_dem
-else:
-    raise Exception("Origem do sistema de coordenadas fora do mapa de elevação carregado!")
+if dem_elevation_data is not None:
+    h0_dem = get_DEM_alt(utm0_x, utm0_y)
+    if h0_dem is not None:
+        h_dem_offset = h0 - h0_dem
+    else:
+        raise Exception("Origem do sistema de coordenadas fora do mapa de elevação carregado!")
 
 # Inicializar GLFW
 if not glfw.init():
@@ -757,11 +762,15 @@ while not glfw.window_should_close(window):
         vec_DEM = norm_vec(reta[1].flatten())
         if vec_DEM[2] < 0:
             vec_DEM = (-1) * vec_DEM
-        click_ENU = find_DEM_intersection(easting + utm0_x, northing + utm0_y, h_abs - h_dem_offset, vec_DEM)
+        if dem_elevation_data is not None:
+            click_ENU = find_DEM_intersection(easting + utm0_x, northing + utm0_y, h_abs - h_dem_offset, vec_DEM)
+        else:
+            click_ENU = find_ground_intersection_ENU(northing, easting, h_enu, vec_DEM)
         if click_ENU is not None:
-            click_ENU[0,0] -= utm0_x
-            click_ENU[1,0] -= utm0_y
-            click_ENU[2,0] += h_dem_offset - h0
+            if dem_elevation_data is not None:
+                click_ENU[0,0] -= utm0_x
+                click_ENU[1,0] -= utm0_y
+                click_ENU[2,0] += h_dem_offset - h0
             erro_car = np.linalg.norm(click_ENU - t_car_mundo)
             dist_drone = np.linalg.norm(t_drone_mundo - t_car_mundo)
             # Frame; Erro; Altura do Drone; Distância do Drone; Click ENU; Click Pixel; Car Pixel; Drone ENU
