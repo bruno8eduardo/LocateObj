@@ -26,7 +26,7 @@ lon0 = -43.221329
 h0 = 12.456
 utm0_x, utm0_y, utm_zn, utm_zl = utm.from_latlon(lat0, lon0)
 
-dem_interception_epsilon = 0.1
+dem_interception_epsilon = 0.05
 
 near = 0.1
 far = 1000.0
@@ -37,23 +37,31 @@ minimal_distance_param = 0.01
 
 roi_minimum_confidence = 0.65
 
+glMode = True
+
 # R x = b
 def get_rotation_from_vectors(x, b):
-    x_norm = x.flatten() / np.linalg.norm(x)
-    b_norm = b.flatten() / np.linalg.norm(b)
+    x_norm = norm_vec(x.flatten())
+    b_norm = norm_vec(b.flatten())
     v = np.cross(x_norm, b_norm)
-    v = v / np.linalg.norm(v)
+    v = norm_vec(v)
     theta = np.arccos(np.clip(np.dot(x_norm, b_norm), -1.0, 1.0))
-    rot_vec = theta * v
-    R, _ = cv2.Rodrigues(rot_vec)
-    return R, rot_vec
+    theta_op = 2 * np.pi - theta
+    if theta <= theta_op:
+        rot_vec = theta * v
+        R_theta, _ = cv2.Rodrigues(rot_vec)
+        return theta, R_theta
+    else:
+        rot_vec = theta_op * v
+        R_theta, _ = cv2.Rodrigues(rot_vec)
+        return theta_op, R_theta
 
-def get_roi_data():
+def get_roi_data(i):
     root = tk.Tk()
     root.withdraw()
-    lat_roi = simpledialog.askfloat("Entrada de dados", "Insira LATITUDE do ROI: ")
-    long_roi = simpledialog.askfloat("Entrada de dados", "Insira LONGITUDE do ROI: ")
-    h_abs_roi = simpledialog.askfloat("Entrada de dados", "Insira ALTITUDE do ROI em relação ao nível do mar: ")
+    lat_roi = simpledialog.askfloat(f"Entrada de dados {i}", f"Insira LATITUDE do ROI {i}: ")
+    long_roi = simpledialog.askfloat(f"Entrada de dados {i}", f"Insira LONGITUDE do ROI {i}: ")
+    h_abs_roi = simpledialog.askfloat(f"Entrada de dados {i}", f"Insira ALTITUDE do ROI {i} em relação ao nível do mar: ")
     return lat_roi, long_roi, h_abs_roi
 
 def inv_K(K):
@@ -65,6 +73,11 @@ def inv_K(K):
              [0, 1/fy, -cy/fy],
              [0, 0, 1]])
     return K_inv
+
+def norm_vec(v):
+    v_copy = v.copy()
+    norm_v = v_copy / np.linalg.norm(v_copy)
+    return norm_v
 
 def parse_srt(file_path):
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -281,13 +294,14 @@ def reta3D(K_inv, R_t, t, pixel):
     return (p0, pv)
 
 def desenhar_centro(image, center_x, center_y, cor):
-    line_length = 10
-    
-    # Desenhar a linha horizontal do '+'
-    cv2.line(image, (int(center_x - line_length // 2), center_y), (int(center_x + line_length // 2), center_y),  cor, 2)  # Verde
+    if not glMode:
+        line_length = 10
+        
+        # Desenhar a linha horizontal do '+'
+        cv2.line(image, (int(center_x - line_length // 2), center_y), (int(center_x + line_length // 2), center_y),  cor, 2)  # Verde
 
-    # Desenhar a linha vertical do '+'
-    cv2.line(image, (center_x, int(center_y - line_length // 2)), (center_x, int(center_y + line_length // 2)),  cor, 2)
+        # Desenhar a linha vertical do '+'
+        cv2.line(image, (center_x, int(center_y - line_length // 2)), (center_x, int(center_y + line_length // 2)),  cor, 2)
 
 def print_on_pixel(image, label, x, y, cor):
     font_scale = 1  # Tamanho da fonte
@@ -377,8 +391,9 @@ def draw_cone_sphere(x, y, z, pitch, color):
 
 def render(draw_func):
 
-    glLoadIdentity()
-    draw_func()
+    if glMode:
+        glLoadIdentity()
+        draw_func()
 
 def draw_opengl(pixels_opengl, imagem_fundo):
     # Capturar a tela do OpenGL
@@ -436,6 +451,61 @@ def get_DEM_alt(east_utm, north_utm):
         return dem_elevation_data[row, col]
     else:
         return None  # Fora da imagem
+
+def get_R_one_roi(roi_enu, roi_pixel, R, K_inv, t_drone_ENU):    
+    theta_1, R_1 = get_rotation_from_vectors(R @ (roi_enu - t_drone_ENU), K_inv @ roi_pixel)
+    theta_2, R_2 = get_rotation_from_vectors(R @ (roi_enu - t_drone_ENU), - K_inv @ roi_pixel)
+    if theta_1 <= theta_2:
+        R_corr = R_1
+    else:
+        R_corr = R_2
+    
+    return R_corr @ R
+
+def get_R_roi(roi_enus, roi_pixels, K_inv, t_drone_ENU):
+    if len(roi_enus) > 2:
+        print("CORRECAO PARA 3 OU MAIS ROI AINDA A IMPLEMENTAR")
+        print("CONSIDERAMOS SOMENTE OS DOIS PRIMEIROS ROI")
+    
+    a_list = [(lambda a: norm_vec(a - t_drone_ENU))(a) for a in roi_enus]
+    b_list = [(lambda b: norm_vec(K_inv @ b))(b) for b in roi_pixels]
+
+    u_0 = a_list[0]
+    u_1 = norm_vec(a_list[1] - (np.dot(a_list[1].copy().flatten(), u_0.copy().flatten())) * u_0)
+    u_2_flat = np.cross(u_0.copy().flatten(), u_1.copy().flatten())
+    u_2 = np.array([[u_2_flat[0]],[u_2_flat[1]],[u_2_flat[2]]])
+    
+    v_0 = b_list[0]
+    v_1 = norm_vec(b_list[1] - (np.dot(b_list[1].copy().flatten(), v_0.copy().flatten())) * v_0)
+    v_2_flat = np.cross(v_0.copy().flatten(), v_1.copy().flatten())
+    v_2 = np.array([[v_2_flat[0]],[v_2_flat[1]],[v_2_flat[2]]])
+
+    A = np.concatenate((u_0, u_1, u_2), axis=1)
+    B = np.concatenate((v_0, v_1, v_2), axis=1)
+
+    return B @ np.transpose(A)
+
+def instantiate(K, R, t, point, color, t_drone_ENU, pitch):
+    pixel = K @ np.concatenate((R, t), axis=1) @ np.vstack((point, [1]))
+    pixel = pixel.flatten()
+    pixel = pixel / pixel[2]
+    if color == "red":
+        colorN = (0,0,255)
+    elif color == "black":
+        colorN = (0,0,0)
+    elif color == "blue":
+        colorN = (255,0,0)
+    elif color == "green":
+        colorN = (0,255,0)
+
+    desenhar_centro(image, int(pixel[0]), int(pixel[1]), colorN)
+    print_on_pixel(image, f"N:{point[1,0]}, E:{point[0,0]}, Up: {point[2,0]}", int(pixel[0]), int(pixel[1]), colorN)
+    t_opengl = cameraToOpenglR @ R @ (point - t_drone_ENU + [[0],[0],[cone_height]])
+    view_matrix = build_view_matrix(cameraToOpenglR @ R, np.array([[0],[0],[0]]))
+    glMatrixMode(GL_MODELVIEW)
+    glLoadMatrixf(view_matrix)
+    render(lambda: draw_cone_sphere(t_opengl[0,0], t_opengl[1,0], t_opengl[2,0], pitch, color))
+
 
 with open("parameters.json", "r") as json_file:
     parameters = json.load(json_file)
@@ -522,17 +592,20 @@ window_name = "Locate"
 # bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 
 get_roi = False
-image_roi_gray = None
-roi_data = None
-roi_pixel = None
+image_roi_gray_list = []
+roi_data_list = []
+roi_pixel_list = []
+roi_confidence_list = []
+good_roi_list = []
+good_roi_data_list = []
 
 scale_reduct_inference = 6
 
 clicks = deque(maxlen=10)
 clicks_ENU = deque(maxlen=10)
 
-# Localizacao carro: [latitude: -22.905551] [longitude: -43.221218] [rel_alt: 2.847 abs_alt: 15.331]
-car_x, car_y, car_z = enu.geodetic2enu(-22.905551, -43.221218, 15.331 - 2.847, lat0, lon0, h0)
+# Localizacao carro: [latitude: -22.905551] [longitude: -43.221218] [rel_alt: 2.847 abs_alt: 15.331] 15.331 - 2.847 = 12.484
+car_x, car_y, car_z = enu.geodetic2enu(-22.905551, -43.221218, 12.484, lat0, lon0, h0)
 t_car_mundo = np.array([[car_x],[car_y],[car_z]])
 
 play = True
@@ -563,6 +636,9 @@ while not glfw.window_should_close(window):
         if frame_index < 1:
             frame_index = 1
         continue
+    elif key & 0xFF == ord('g'):
+        glMode = not glMode
+        continue
     elif key & 0xFF == ord('s'):
         get_roi = True
         continue
@@ -571,6 +647,11 @@ while not glfw.window_should_close(window):
     
     image = images[frame_index - 1 if frame_index > 0 else 0].copy()
     image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    roi_pixel_list.clear()
+    roi_confidence_list.clear()
+    good_roi_list.clear()
+    good_roi_data_list.clear()
+    R_roi = None
 
     yaw = float(frame_info[frame_index]['gb_yaw'])
     pitch = float(frame_info[frame_index]['gb_pitch'])
@@ -578,7 +659,7 @@ while not glfw.window_should_close(window):
     R_drone = yaw_pitch_roll_to_rotation_matrix(yaw, pitch, roll)
     R_drone_T = np.transpose(R_drone)
 
-    h = float(frame_info[frame_index]['rel_alt'])
+    h_rel = float(frame_info[frame_index]['rel_alt'])
     h_abs = float(frame_info[frame_index]['abs_alt'])
     lat = float(frame_info[frame_index]['latitude'])
     long = float(frame_info[frame_index]['longitude'])
@@ -608,67 +689,53 @@ while not glfw.window_should_close(window):
     #         R_alt = R_hom @ droneToCameraR @ R_drone_base_T @ mundoToDroneR
 
     t_drone_mundo = np.array([[easting], [northing], [h_enu]])
-    print_on_pixel(image, f"index:{frame_index}, N:{int(northing)}, E:{int(easting)}, h_rel:{h}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,0))
+    print_on_pixel(image, f"index:{frame_index}, N:{int(northing)}, E:{int(easting)}, h_rel:{h_rel}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,0))
 
     R = droneToCameraR @ R_drone_T @ mundoToDroneR
-    t =  - R @ t_drone_mundo
-    view_matrix = build_view_matrix(cameraToOpenglR @ R, np.array([[0],[0],[0]]))
-    glMatrixMode(GL_MODELVIEW)
-    glLoadMatrixf(view_matrix)
 
     if get_roi:
-        roi = cv2.selectROI("Select ROI", image)
-        cv2.destroyWindow("Select ROI")
-        x, y, w, h = roi
-        image_roi = image[y:y+h, x:x+w]
-        image_roi_gray = cv2.cvtColor(image_roi, cv2.COLOR_BGR2GRAY)
-        roi_data = get_roi_data()
+        rois = cv2.selectROIs("Select ROIs", image)
+        cv2.destroyWindow("Select ROIs")
+        for i,roi in enumerate(rois):
+            x, y, w, h = roi
+            image_roi = image[y:y+h, x:x+w]
+            image_roi_gray_list.append(cv2.cvtColor(image_roi, cv2.COLOR_BGR2GRAY))
+            roi_data = get_roi_data(i)
+            roi_data_list.append(roi_data)
         get_roi = False
     
-    if image_roi_gray is not None:
+    for i,image_roi_gray in enumerate(image_roi_gray_list):
         templ_match = cv2.matchTemplate(image_gray, image_roi_gray, cv2.TM_CCOEFF_NORMED)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(templ_match)
         w, h = image_roi_gray.shape[::-1]
         roi_x = max_loc[0] + w/2
         roi_y = max_loc[1] + h/2
         roi_pixel = np.array([[roi_x], [roi_y], [1]])
-        desenhar_centro(image, int(roi_x), int(roi_y), (0, 255, 0))
-        print_on_pixel(image, f"Confianca: {max_val}", int(roi_x), int(roi_y), (0, 255, 0))
-        
-        if max_val > roi_minimum_confidence:
-            lat_roi, long_roi, h_abs_roi = roi_data
+        roi_pixel_list.append(roi_pixel)
+        roi_confidence_list.append(max_val)
+        desenhar_centro(image, int(roi_x), int(roi_y), (100, 0, 100))
+        print_on_pixel(image, f"Confianca: {max_val}", int(roi_x), int(roi_y), (100, 0, 100))
+    
+    for i,roi_confidence in enumerate(roi_confidence_list):
+        if roi_confidence > roi_minimum_confidence:
+            good_roi_list.append(roi_pixel_list[i])
+            lat_roi, long_roi, h_abs_roi = roi_data_list[i]
             easting_roi, northing_roi, h_enu_roi = enu.geodetic2enu(lat_roi, long_roi, h_abs_roi, lat0, lon0, h0)
             roi_enu = np.array([[easting_roi],[northing_roi],[h_enu_roi]])
-            lambd = np.linalg.norm(roi_enu - t_drone_mundo) / np.linalg.norm(K_inv @ roi_pixel)
-            R_1, rot_vec_1 = get_rotation_from_vectors(roi_enu - t_drone_mundo, lambd * K_inv @ roi_pixel)
-            R_2, rot_vec_2 = get_rotation_from_vectors(roi_enu - t_drone_mundo, - lambd * K_inv @ roi_pixel)
-            R_T = np.transpose(R)
-            trace_1 = np.trace(R_T @ R_1)
-            trace_2 = np.trace(R_T @ R_2)
-            diff_1 = np.arccos(np.clip((trace_1 - 1) / 2, -1.0, 1.0))
-            diff_2 = np.arccos(np.clip((trace_2 - 1) / 2, -1.0, 1.0))
-            if diff_1 < diff_2:
-                R_corr = R_1
-            else:
-                R_corr = R_2
-            t_roi_opengl = cameraToOpenglR @ R_corr @ (roi_enu - t_drone_mundo + [[0],[0],[cone_height]])
-            view_matrix_corr = build_view_matrix(cameraToOpenglR @ R_corr, np.array([[0],[0],[0]]))
-            glMatrixMode(GL_MODELVIEW)
-            glLoadMatrixf(view_matrix_corr)
-            render(lambda: draw_cone_sphere(t_roi_opengl[0,0], t_roi_opengl[1,0], t_roi_opengl[2,0], pitch, "green"))
-        else:
-            R_corr = None
+            good_roi_data_list.append(roi_enu)
+    
+    if len(good_roi_list) == 1:
+        R_roi = get_R_one_roi(good_roi_data_list[0], good_roi_list[0], R, K_inv, t_drone_mundo)
+    elif len(good_roi_list) >= 2:
+        R_roi = get_R_roi(good_roi_data_list, good_roi_list, K_inv, t_drone_mundo)
+    
+    t =  - R @ t_drone_mundo
 
     # Carro
     pixel_car = K @ np.concatenate((R, t), axis=1) @ np.vstack((t_car_mundo, [1]))
     pixel_car = pixel_car.flatten()
     pixel_car = pixel_car / pixel_car[2]
-    desenhar_centro(image, int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
-    print_on_pixel(image, f"N:{t_car_mundo[1,0]}, E:{t_car_mundo[0,0]}", int(pixel_car[0] / scale_x), int(pixel_car[1] / scale_y), (0,0,255))
-    t_car_opengl = cameraToOpenglR @ R @ (t_car_mundo - t_drone_mundo + [[0],[0],[cone_height]])
-    glMatrixMode(GL_MODELVIEW)
-    glLoadMatrixf(np.transpose(view_matrix))
-    render(lambda: draw_cone_sphere(t_car_opengl[0,0], t_car_opengl[1,0], t_car_opengl[2,0], pitch, "red"))
+    instantiate(K, R, t, t_car_mundo, "red", t_drone_mundo, pitch)
 
     # # Homography stuff
     # if R_alt is not None:
@@ -682,21 +749,12 @@ while not glfw.window_should_close(window):
 
 
     # Origem coordenada ENU
-    pixel_zero = K @ np.concatenate((R, t), axis=1) @ np.array([[0],[0],[0],[1]])
-    pixel_zero = pixel_zero.flatten()
-    pixel_zero = pixel_zero / pixel_zero[2]
-    desenhar_centro(image, int(pixel_zero[0] / scale_x), int(pixel_zero[1] / scale_y), (0,0,0))
-    print_on_pixel(image, "N:0, E:0", int(pixel_zero[0] / scale_x), int(pixel_zero[1] / scale_y), (0,0,0))
-    t_zero_opengl = cameraToOpenglR @ R @ (- t_drone_mundo + [[0],[0],[cone_height]])
-    glMatrixMode(GL_MODELVIEW)
-    glLoadMatrixf(np.transpose(view_matrix))
-    render(lambda: draw_cone_sphere(t_zero_opengl[0,0], t_zero_opengl[1,0], t_zero_opengl[2,0], pitch, "black"))
+    instantiate(K, R, t, np.array([[0],[0],[0]]), "black", t_drone_mundo, pitch)
 
     for click in clicks:
         reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (click[0], click[1]))
         # click_ENU = find_ground_intersection_ENU(northing, easting, h_enu, reta[1])
-        vec_DEM = reta[1].flatten()
-        vec_DEM = vec_DEM / np.linalg.norm(vec_DEM)
+        vec_DEM = norm_vec(reta[1].flatten())
         if vec_DEM[2] < 0:
             vec_DEM = (-1) * vec_DEM
         click_ENU = find_DEM_intersection(easting + utm0_x, northing + utm0_y, h_abs - h_dem_offset, vec_DEM)
@@ -704,22 +762,20 @@ while not glfw.window_should_close(window):
             click_ENU[0,0] -= utm0_x
             click_ENU[1,0] -= utm0_y
             click_ENU[2,0] += h_dem_offset - h0
+            erro_car = np.linalg.norm(click_ENU - t_car_mundo)
+            dist_drone = np.linalg.norm(t_drone_mundo - t_car_mundo)
+            # Frame; Erro; Altura do Drone; Distância do Drone; Click ENU; Click Pixel; Car Pixel; Drone ENU
+            print(f"{frame_index}; {erro_car}; {h_rel}; {dist_drone}; {click_ENU.copy().flatten()}; {(click[0], click[1])}; {(pixel_car[0], pixel_car[1])}; {t_drone_mundo.copy().flatten()}")
             clicks_ENU.append(click_ENU)
 
     clicks.clear()
     clicks_ENU_copy = clicks_ENU.copy()
 
     for enu_click in clicks_ENU_copy:
-        pixel_click = K @ np.concatenate((R, t), axis=1) @ np.vstack((enu_click, [1]))
-        pixel_click = pixel_click.flatten()
-        pixel_click = pixel_click / pixel_click[2]
-        if pixel_click[0] >= 0 and pixel_click[0] <= original_width and pixel_click[1] >= 0 and pixel_click[1] <= original_height:
-            desenhar_centro(image, int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
-            print_on_pixel(image, f"N:{enu_click[1,0]}, E:{enu_click[0,0]}", int(pixel_click[0]), int(pixel_click[1]), (255, 0, 0))
-            t_click_opengl = cameraToOpenglR @ R @ (enu_click - t_drone_mundo + [[0],[0],[cone_height]])
-            glMatrixMode(GL_MODELVIEW)
-            glLoadMatrixf(np.transpose(view_matrix))
-            render(lambda: draw_cone_sphere(t_click_opengl[0,0], t_click_opengl[1,0], t_click_opengl[2,0], pitch, "blue"))
+        instantiate(K, R, t, enu_click, "blue", t_drone_mundo, pitch)
+        if R_roi is not None:
+            instantiate(K, R_roi, - R_roi @ t_drone_mundo, enu_click, "green", t_drone_mundo, pitch)
+    
     glfw.poll_events()
     glfw.swap_buffers(window)
     
