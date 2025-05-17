@@ -499,7 +499,7 @@ def instantiate(K, R, t, point, color, t_drone_ENU, pitch):
         colorN = (0,255,0)
 
     desenhar_centro(image, int(pixel[0]), int(pixel[1]), colorN)
-    print_on_pixel(image, f"N:{point[1,0]}, E:{point[0,0]}, Up: {point[2,0]}", int(pixel[0]), int(pixel[1]), colorN)
+    print_on_pixel(image, f"N:{point[1,0]:.3f}, E:{point[0,0]:.3f}, Up: {point[2,0]:.3f}", int(pixel[0]), int(pixel[1]), colorN)
     t_opengl = cameraToOpenglR @ R @ (point - t_drone_ENU + [[0],[0],[cone_height]])
     view_matrix = build_view_matrix(cameraToOpenglR @ R, np.array([[0],[0],[0]]))
     glMatrixMode(GL_MODELVIEW)
