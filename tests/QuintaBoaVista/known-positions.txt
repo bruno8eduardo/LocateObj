@@ -1,0 +1,14 @@
+Car:
+    Latitude: -22.905551
+    Longitude: -43.221218
+    Altitude: 12.484
+
+Canto das Sereias Monument by Nicolina Vaz de Assis:
+    Latitude: -22.905432
+    Longitude: -43.221759
+    Altitude: 3.637
+
+Parking booth:
+    Latitude: -22.905292
+    Longitude: -43.221035 
+    Altitude: 3.810

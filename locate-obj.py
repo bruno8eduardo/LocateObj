@@ -293,8 +293,8 @@ def reta3D(K_inv, R_t, t, pixel):
     pv = R_t @ K_inv @ pixel_RP2
     return (p0, pv)
 
-def desenhar_centro(image, center_x, center_y, cor):
-    if not glMode:
+def desenhar_centro(image, center_x, center_y, cor, roi_flag=False):
+    if (not glMode) or roi_flag:
         line_length = 10
         
         # Desenhar a linha horizontal do '+'
@@ -718,8 +718,8 @@ while not glfw.window_should_close(window):
         roi_pixel = np.array([[roi_x], [roi_y], [1]])
         roi_pixel_list.append(roi_pixel)
         roi_confidence_list.append(max_val)
-        desenhar_centro(image, int(roi_x), int(roi_y), (100, 0, 100))
-        print_on_pixel(image, f"Confianca: {max_val}", int(roi_x), int(roi_y), (100, 0, 100))
+        desenhar_centro(image, int(roi_x), int(roi_y), (100, 0, 100), roi_flag=True)
+        print_on_pixel(image, f"ROI similarity: {max_val:.3f}", int(roi_x), int(roi_y), (100, 0, 100))
     
     for i,roi_confidence in enumerate(roi_confidence_list):
         if roi_confidence > roi_minimum_confidence:
