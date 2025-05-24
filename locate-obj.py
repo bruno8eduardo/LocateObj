@@ -535,6 +535,14 @@ if dem_elevation_data is not None:
 if not glfw.init():
     raise Exception("GLFW não pôde ser inicializado!")
 
+cuda_count = cv2.cuda.getCudaEnabledDeviceCount()
+gsrc = cv2.cuda.GpuMat()
+gtemplate = cv2.cuda.GpuMat()
+gresult = cv2.cuda.GpuMat()
+if cuda_count != 0:
+    print("CUDA enabled")
+    cuda_matcher = cv2.cuda.createTemplateMatching(cv2.CV_8UC1, cv2.TM_CCOEFF_NORMED)
+
 # Criar janela OpenGL
 window = glfw.create_window(1920, 1080, "Render 3D", None, None)
 glfw.make_context_current(window)
@@ -710,7 +718,13 @@ while not glfw.window_should_close(window):
         get_roi = False
     
     for i,image_roi_gray in enumerate(image_roi_gray_list):
-        templ_match = cv2.matchTemplate(image_gray, image_roi_gray, cv2.TM_CCOEFF_NORMED)
+        if cuda_count == 0:
+            templ_match = cv2.matchTemplate(image_gray, image_roi_gray, cv2.TM_CCOEFF_NORMED)
+        else:
+            gsrc.upload(image_gray)
+            gtemplate.upload(image_roi_gray)
+            gresult = cuda_matcher.match(gsrc, gtemplate)
+            templ_match = gresult.download()
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(templ_match)
         w, h = image_roi_gray.shape[::-1]
         roi_x = max_loc[0] + w/2
