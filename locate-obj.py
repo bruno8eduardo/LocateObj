@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import simpledialog
 import rasterio
 import utm
+import time
 
 droneToMundoR = np.array([[0,1,0],[1,0,0],[0,0,-1]])
 mundoToDroneR = np.transpose(droneToMundoR)
@@ -365,6 +366,8 @@ def draw_cone_sphere(x, y, z, pitch, color):
         color_array = [0.0, 1.0, 0.0, 1.0]
     elif color == "black":
         color_array = [0.1, 0.1, 0.1, 1.0]
+    elif color == "gray":
+        color_array = [0.5, 0.5, 0.5, 1.0]
 
     # Esfera vermelha
     glMaterialfv(GL_FRONT, GL_AMBIENT, color_array)
@@ -497,6 +500,8 @@ def instantiate(K, R, t, point, color, t_drone_ENU, pitch):
         colorN = (255,0,0)
     elif color == "green":
         colorN = (0,255,0)
+    elif color == "gray":
+        colorN = (127,127,127)
 
     desenhar_centro(image, int(pixel[0]), int(pixel[1]), colorN)
     print_on_pixel(image, f"N:{point[1,0]:.3f}, E:{point[0,0]:.3f}, Up: {point[2,0]:.3f}", int(pixel[0]), int(pixel[1]), colorN)
@@ -512,7 +517,11 @@ with open("parameters.json", "r") as json_file:
 
 K_path = parameters["K_path"]
 with open(K_path, "r") as json_file:
-    K = np.array(json.load(json_file), dtype=np.float64)
+    K_flat = np.array(json.load(json_file), dtype=np.float64)
+
+dist_path = parameters["dist_path"]
+with open(dist_path, "r") as json_file:
+    distort = np.array(json.load(json_file), dtype=np.float64)
 
 dem_elevation_data = None
 try:
@@ -542,6 +551,15 @@ gresult = cv2.cuda.GpuMat()
 if cuda_count != 0:
     print("CUDA enabled")
     cuda_matcher = cv2.cuda.createTemplateMatching(cv2.CV_8UC1, cv2.TM_CCOEFF_NORMED)
+
+    K, _ = cv2.getOptimalNewCameraMatrix(K_flat, distort, (1920, 1080), 1)
+    map1, map2 = cv2.initUndistortRectifyMap(K_flat, distort, None, K, (1920, 1080), cv2.CV_32FC1)
+    map1_gpu = cv2.cuda_GpuMat()
+    map2_gpu = cv2.cuda_GpuMat()
+    map1_gpu.upload(map1)
+    map2_gpu.upload(map2)
+else:
+    K = K_flat
 
 # Criar janela OpenGL
 window = glfw.create_window(1920, 1080, "Render 3D", None, None)
@@ -624,11 +642,17 @@ t_car_mundo = np.array([[car_x],[car_y],[car_z]])
 play = True
 images = []
 while not glfw.window_should_close(window):
+    begin_time = time.time()
     
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
     ret, image = cap.read()
     if ret:
+        if cuda_count != 0:
+            frame_gpu = cv2.cuda_GpuMat()
+            frame_gpu.upload(image)
+            undistorted_gpu = cv2.cuda.remap(frame_gpu, map1_gpu, map2_gpu, interpolation=cv2.INTER_LINEAR)
+            image = undistorted_gpu.download()
         images.append(image)
         if play:
             frame_index += 1
@@ -747,6 +771,10 @@ while not glfw.window_should_close(window):
         R_roi = get_R_one_roi(good_roi_data_list[0], good_roi_list[0], R, K_inv, t_drone_mundo)
     elif len(good_roi_list) >= 2:
         R_roi = get_R_roi(good_roi_data_list, good_roi_list, K_inv, t_drone_mundo)
+
+    t_roi = None
+    if R_roi is not None:
+        t_roi = - R_roi @ t_drone_mundo
     
     t =  - R @ t_drone_mundo
 
@@ -769,6 +797,8 @@ while not glfw.window_should_close(window):
 
     # Origem coordenada ENU
     instantiate(K, R, t, np.array([[0],[0],[0]]), "black", t_drone_mundo, pitch)
+    if R_roi is not None:
+        instantiate(K, R_roi, t_roi, np.array([[0],[0],[0]]), "gray", t_drone_mundo, pitch)
 
     for click in clicks:
         reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (click[0], click[1]))
@@ -788,7 +818,7 @@ while not glfw.window_should_close(window):
             erro_car = np.linalg.norm(click_ENU - t_car_mundo)
             dist_drone = np.linalg.norm(t_drone_mundo - t_car_mundo)
             # Frame; Erro; Altura do Drone; Distância do Drone; Click ENU; Click Pixel; Car Pixel; Drone ENU
-            print(f"{frame_index}; {erro_car}; {h_rel}; {dist_drone}; {click_ENU.copy().flatten()}; {(click[0], click[1])}; {(pixel_car[0], pixel_car[1])}; {t_drone_mundo.copy().flatten()}")
+            # print(f"{frame_index}; {erro_car}; {h_rel}; {dist_drone}; {click_ENU.copy().flatten()}; {(click[0], click[1])}; {(pixel_car[0], pixel_car[1])}; {t_drone_mundo.copy().flatten()}")
             clicks_ENU.append(click_ENU)
 
     clicks.clear()
@@ -834,3 +864,6 @@ while not glfw.window_should_close(window):
     rez_img = cv2.resize(image, (resized_width, resized_height))
     cv2.imshow(window_name, rez_img)
     cv2.setMouseCallback(window_name, mouse_click, (clicks, clicks_ENU))
+
+    end_time = time.time()
+    print(f"Frame time: {1000 * (end_time - begin_time)} ms")
