@@ -26,7 +26,8 @@ lon0 = -43.221329
 h0 = 12.456
 utm0_x, utm0_y, utm_zn, utm_zl = utm.from_latlon(lat0, lon0)
 
-dem_interception_epsilon = 0.1
+dem_interception_epsilon = 0.01
+dem_interception_count = 50
 
 near = 0.1
 far = 1000.0
@@ -156,16 +157,24 @@ def yaw_pitch_roll_to_rotation_matrix(yaw, pitch, roll):
     return R
 
 def find_DEM_intersection(utm_east, utm_north, utm_up, vec_flat_norm):
-    alt = get_DEM_alt(utm_east, utm_north)
-    if alt is not None:
+    count = 0
+    while True:
+        alt = get_DEM_alt(utm_east, utm_north)
+        if alt is None:
+            return None
+        
         gap = utm_up - alt
-        if np.abs(gap) > dem_interception_epsilon:
-            vec = gap * vec_flat_norm
-            return find_DEM_intersection(utm_east - vec[0], utm_north - vec[1], utm_up - vec[2], vec_flat_norm)
-        else:
+        if np.abs(gap) <= dem_interception_epsilon:
             return np.array([[utm_east], [utm_north], [utm_up]])
-    else:
-        return None
+        
+        vec = gap * vec_flat_norm
+        utm_east -= vec[0]
+        utm_north -= vec[1]
+        utm_up -= vec[2]
+        
+        count += 1
+        if count > dem_interception_count:
+            return None
 
 def find_ground_intersection(lat, lon, alt, vec):
 
