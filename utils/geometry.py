@@ -92,8 +92,8 @@ class Geometry:
             return False
 
     def get_R_one_roi(self, roi_enu, roi_pixel, R, K_inv, t_drone_ENU):    
-        theta_1, R_1 = get_rotation_from_vectors(R @ (roi_enu - t_drone_ENU), K_inv @ roi_pixel)
-        theta_2, R_2 = get_rotation_from_vectors(R @ (roi_enu - t_drone_ENU), - K_inv @ roi_pixel)
+        theta_1, R_1 = self.get_rotation_from_vectors(R @ (roi_enu - t_drone_ENU), K_inv @ roi_pixel)
+        theta_2, R_2 = self.get_rotation_from_vectors(R @ (roi_enu - t_drone_ENU), - K_inv @ roi_pixel)
         if theta_1 <= theta_2:
             R_corr = R_1
         else:
@@ -106,16 +106,16 @@ class Geometry:
             print("CORRECAO PARA 3 OU MAIS ROI AINDA A IMPLEMENTAR")
             print("CONSIDERAMOS SOMENTE OS DOIS PRIMEIROS ROI")
         
-        a_list = [(lambda a: norm_vec(a - t_drone_ENU))(a) for a in roi_enus]
-        b_list = [(lambda b: norm_vec(K_inv @ b))(b) for b in roi_pixels]
+        a_list = [(lambda a: self.norm_vec(a - t_drone_ENU))(a) for a in roi_enus]
+        b_list = [(lambda b: self.norm_vec(K_inv @ b))(b) for b in roi_pixels]
 
         u_0 = a_list[0]
-        u_1 = norm_vec(a_list[1] - (np.dot(a_list[1].copy().flatten(), u_0.copy().flatten())) * u_0)
+        u_1 = self.norm_vec(a_list[1] - (np.dot(a_list[1].copy().flatten(), u_0.copy().flatten())) * u_0)
         u_2_flat = np.cross(u_0.copy().flatten(), u_1.copy().flatten())
         u_2 = np.array([[u_2_flat[0]],[u_2_flat[1]],[u_2_flat[2]]])
         
         v_0 = b_list[0]
-        v_1 = norm_vec(b_list[1] - (np.dot(b_list[1].copy().flatten(), v_0.copy().flatten())) * v_0)
+        v_1 = self.norm_vec(b_list[1] - (np.dot(b_list[1].copy().flatten(), v_0.copy().flatten())) * v_0)
         v_2_flat = np.cross(v_0.copy().flatten(), v_1.copy().flatten())
         v_2 = np.array([[v_2_flat[0]],[v_2_flat[1]],[v_2_flat[2]]])
 
@@ -126,10 +126,10 @@ class Geometry:
 
     # R x = b
     def get_rotation_from_vectors(self, x, b):
-        x_norm = norm_vec(x.flatten())
-        b_norm = norm_vec(b.flatten())
+        x_norm = self.norm_vec(x.flatten())
+        b_norm = self.norm_vec(b.flatten())
         v = np.cross(x_norm, b_norm)
-        v = norm_vec(v)
+        v = self.norm_vec(v)
         theta = np.arccos(np.clip(np.dot(x_norm, b_norm), -1.0, 1.0))
         theta_op = 2 * np.pi - theta
         if theta <= theta_op:
