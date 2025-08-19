@@ -14,6 +14,7 @@ from utils.geodetic import Geodetic
 from utils.geometry import Geometry
 from utils.parse_dji import parse_srt
 from utils.ui import *
+import time
 
 lat0 = -22.905812 
 lon0 = -43.221329
@@ -124,6 +125,8 @@ window_name = "Locate"
 # orb = cv2.ORB_create(nfeatures=1000)
 # bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 
+frame_time_list = []
+
 get_roi = False
 image_roi_gray_list = []
 roi_data_list = []
@@ -144,6 +147,7 @@ t_car_mundo = np.array([[car_x],[car_y],[car_z]])
 play = True
 images = []
 while not glfw.window_should_close(window):
+    start_frame = time.perf_counter_ns()
     
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
@@ -154,7 +158,7 @@ while not glfw.window_should_close(window):
             frame_index += 1
 
     key = cv2.waitKey(1)
-    if key & 0xFF == ord('q'):
+    if (key & 0xFF == ord('q')) or frame_index >= len(frame_info):
         break
     elif key & 0xFF == ord('d'):
         if frame_index + 1 < len(images):
@@ -308,7 +312,7 @@ while not glfw.window_should_close(window):
             erro_car = np.linalg.norm(click_ENU - t_car_mundo)
             dist_drone = np.linalg.norm(t_drone_mundo - t_car_mundo)
             # Frame; Erro; Altura do Drone; Distância do Drone; Click ENU; Click Pixel; Car Pixel; Drone ENU
-            print(f"{frame_index}; {erro_car}; {h_rel}; {dist_drone}; {click_ENU.copy().flatten()}; {(click[0], click[1])}; {(pixel_car[0], pixel_car[1])}; {t_drone_mundo.copy().flatten()}")
+            # print(f"{frame_index}; {erro_car}; {h_rel}; {dist_drone}; {click_ENU.copy().flatten()}; {(click[0], click[1])}; {(pixel_car[0], pixel_car[1])}; {t_drone_mundo.copy().flatten()}")
             clicks_ENU.append(click_ENU)
 
     clicks.clear()
@@ -354,3 +358,14 @@ while not glfw.window_should_close(window):
     rez_img = cv2.resize(image, (resized_width, resized_height))
     cv2.imshow(window_name, rez_img)
     cv2.setMouseCallback(window_name, mouse_click, (clicks, clicks_ENU, scale_x, scale_y))
+    
+    end_frame = time.perf_counter_ns()
+    frame_time = end_frame - start_frame
+    frame_time_list.append(frame_time)
+    print(f"Frame: {frame_index}; Time ns: {frame_time}")
+
+time_mean = np.mean(frame_time_list)
+time_max = np.max(frame_time_list)
+time_std = np.std(frame_time_list)
+
+print(f"Time Mean: {time_mean}; Time Max: {time_max}; Time STD: {time_std}")
