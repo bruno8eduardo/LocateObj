@@ -30,6 +30,9 @@ K_path = parameters["K_path"]
 with open(K_path, "r") as json_file:
     K = np.array(json.load(json_file), dtype=np.float64)
 
+original_width = parameters["video_width"]
+original_height = parameters["video_height"]
+
 # dem_elevation_data = None
 try:
     tif_path = parameters["tif_path"]
@@ -50,7 +53,7 @@ if dem_elevation_data is not None:
         raise Exception("Origem do sistema de coordenadas fora do mapa de elevação carregado!")
     
 geometry = Geometry()
-graphics = Graphics(geometry)
+graphics = Graphics(geometry, original_width, original_height)
 
 # Inicializar GLFW
 if not glfw.init():
@@ -65,7 +68,7 @@ if cuda_count != 0:
     cuda_matcher = cv2.cuda.createTemplateMatching(cv2.CV_8UC1, cv2.TM_CCOEFF_NORMED)
 
 # Criar janela OpenGL
-window = glfw.create_window(1920, 1080, "Render 3D", None, None)
+window = glfw.create_window(original_width, original_height, "Render 3D", None, None)
 glfw.make_context_current(window)
 
 glEnable(GL_DEPTH_TEST)
@@ -93,7 +96,7 @@ glLightfv(GL_LIGHT0, GL_SPECULAR, light_specular)
 glEnable(GL_NORMALIZE)
 
 # Configurar matriz de projeção
-proj_matrix = graphics.build_projection_matrix(K, 1920, 1080)
+proj_matrix = graphics.build_projection_matrix(K, original_width, original_height)
 glMatrixMode(GL_PROJECTION)
 glLoadMatrixf(np.transpose(proj_matrix))
 
@@ -112,12 +115,8 @@ cap = cv2.VideoCapture(source)
 frame_info = parse_srt(parameters["video_data_path"])
 frame_index = 0
 
-original_width = 1920
-original_height = 1080
-resized_width = parameters["resized_width"]
-resized_height = parameters["resized_height"]
-scale_x = original_width / resized_width
-scale_y = original_height / resized_height
+original_width = parameters["video_width"]
+original_height = parameters["video_height"]
 window_name = "Locate"
 
 # # Homography stuff
@@ -285,8 +284,8 @@ while not glfw.window_should_close(window):
     #     pixel_car_alt = K @ np.concatenate((R_alt, - R_alt @ t_drone_mundo), axis=1) @ np.vstack((t_car_mundo, [1]))
     #     pixel_car_alt = pixel_car_alt.flatten()
     #     pixel_car_alt = pixel_car_alt / pixel_car_alt[2]
-    #     desenhar_centro(image, int(pixel_car_alt[0] / scale_x), int(pixel_car_alt[1] / scale_y), (255,0,0))
-    #     print_on_pixel(image, f"N:{t_car_mundo[1,0]}, E:{t_car_mundo[0,0]}", int(pixel_car_alt[0] / scale_x), int(pixel_car_alt[1] / scale_y), (255,0,0))
+    #     desenhar_centro(image, int(pixel_car_alt[0]), int(pixel_car_alt[1]), (255,0,0))
+    #     print_on_pixel(image, f"N:{t_car_mundo[1,0]}, E:{t_car_mundo[0,0]}", int(pixel_car_alt[0]), int(pixel_car_alt[1]), (255,0,0))
     #     t_car_opengl_alt = cameraToOpenglR @ R_alt @ (t_car_mundo - t_drone_mundo + [[0],[0],[cone_height]])
     #     render(lambda: draw_cone_sphere(t_car_opengl_alt[0,0], t_car_opengl_alt[1,0], t_car_opengl_alt[2,0], pitch, "blue"))
 
@@ -326,7 +325,7 @@ while not glfw.window_should_close(window):
     glfw.poll_events()
     glfw.swap_buffers(window)
     
-    pixels = glReadPixels(0, 0, 1920, 1080, GL_RGB, GL_UNSIGNED_BYTE)
+    pixels = glReadPixels(0, 0, original_width, original_height, GL_RGB, GL_UNSIGNED_BYTE)
     image = graphics.draw_opengl(pixels, image)
     
     # # IA detection stuff
@@ -355,9 +354,8 @@ while not glfw.window_should_close(window):
     #         pred_UTM = find_ground_intersection_UTM(northing, easting, h, h_abs, reta[1])
     #         print_on_pixel(image, f"N:{pred_UTM[1]}, E:{pred_UTM[0]}, ZN:{zone_number}, ZL:{zone_letter}", x, y, (0, 0, 255))
     
-    rez_img = cv2.resize(image, (resized_width, resized_height))
-    cv2.imshow(window_name, rez_img)
-    cv2.setMouseCallback(window_name, mouse_click, (clicks, clicks_ENU, scale_x, scale_y))
+    cv2.imshow(window_name, image)
+    cv2.setMouseCallback(window_name, mouse_click, (clicks, clicks_ENU))
     
     end_frame = time.perf_counter_ns()
     frame_time = end_frame - start_frame

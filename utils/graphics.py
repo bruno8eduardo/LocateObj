@@ -5,8 +5,10 @@ from OpenGL.GLU import *
 
 class Graphics:
 
-    def __init__(self, geometry, near = 0.1, far = 1000.0, cone_height = 5.0, cone_radius = 1.5, glMode = True):
+    def __init__(self, geometry, frame_width, frame_height, near = 0.1, far = 1000.0, cone_height = 5.0, cone_radius = 1.5, glMode = True):
         self.cameraToOpenglR = geometry.cameraToOpenglR
+        self.frame_width = frame_width
+        self.frame_height = frame_height
         self.near = near
         self.far = far
         self.cone_height = cone_height
@@ -80,7 +82,7 @@ class Graphics:
 
     def draw_opengl(self, pixels_opengl, imagem_fundo):
         # Capturar a tela do OpenGL
-        imagem_renderizada = np.frombuffer(pixels_opengl, dtype=np.uint8).reshape(1080, 1920, 3)
+        imagem_renderizada = np.frombuffer(pixels_opengl, dtype=np.uint8).reshape(self.frame_height, self.frame_width, 3)
         imagem_renderizada = cv2.flip(imagem_renderizada, 0)
         imagem_renderizada = cv2.cvtColor(imagem_renderizada, cv2.COLOR_RGB2BGR)  # Converter RGB → BGR
 

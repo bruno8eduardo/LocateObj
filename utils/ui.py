@@ -11,10 +11,10 @@ def get_roi_data(i):
     return lat_roi, long_roi, h_abs_roi
 
 def mouse_click(event, x, y, flags, param):
-    clicks, clicks_ENU, scale_x, scale_y = param
+    clicks, clicks_ENU = param
     if event == cv2.EVENT_LBUTTONDOWN:  # Clique com o botão esquerdo
-        original_x = int(x * scale_x)
-        original_y = int(y * scale_y)
+        original_x = int(x)
+        original_y = int(y)
         clicks.append((original_x, original_y))
     elif event == cv2.EVENT_RBUTTONDOWN:  # Clique com o botão direito
         if (len(clicks_ENU) > 0):
