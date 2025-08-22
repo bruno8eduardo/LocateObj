@@ -153,11 +153,13 @@ while not glfw.window_should_close(window):
     ret, image = cap.read()
     if ret:
         images.append(image)
-        if play:
-            frame_index += 1
+    if play:
+        frame_index += 1
+    if frame_index >= len(frame_info):
+        frame_index = 1
 
     key = cv2.waitKey(1)
-    if (key & 0xFF == ord('q')) or frame_index >= len(frame_info):
+    if key & 0xFF == ord('q'):
         break
     elif key & 0xFF == ord('d'):
         if frame_index + 1 < len(images):
