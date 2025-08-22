@@ -368,4 +368,4 @@ time_mean = np.mean(frame_time_list)
 time_max = np.max(frame_time_list)
 time_std = np.std(frame_time_list)
 
-print(f"Time Mean: {time_mean}; Time Max: {time_max}; Time STD: {time_std}")
+print(f"Time Mean: {time_mean * 1e-6} ms; Time Max: {time_max * 1e-6} ms; Time STD: {time_std * 1e-6} ms")
