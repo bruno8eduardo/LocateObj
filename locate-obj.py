@@ -1,5 +1,4 @@
 import cv2
-from inference_sdk import InferenceHTTPClient
 import numpy as np
 from collections import deque
 import json
@@ -33,7 +32,6 @@ with open(K_path, "r") as json_file:
 original_width = parameters["video_width"]
 original_height = parameters["video_height"]
 
-# dem_elevation_data = None
 try:
     tif_path = parameters["tif_path"]
     with rasterio.open(tif_path) as dem_dataset:
@@ -104,10 +102,6 @@ K_inv = geometry.inv_K(K)
 
 project_id = "car-models-rr7w5"
 model_version = 1
-api_key = parameters["api_key"]
-api_url = parameters["api_url"]
-
-client = InferenceHTTPClient(api_url=api_url, api_key=api_key)
 
 source = parameters["video_path"]
 cap = cv2.VideoCapture(source)
@@ -118,11 +112,6 @@ frame_index = 0
 original_width = parameters["video_width"]
 original_height = parameters["video_height"]
 window_name = "Locate"
-
-# # Homography stuff
-# frame_gap = 10
-# orb = cv2.ORB_create(nfeatures=1000)
-# bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 
 frame_time_list = []
 
@@ -204,28 +193,6 @@ while not glfw.window_should_close(window):
 
     easting, northing, h_enu = enu.geodetic2enu(lat, long, h_abs, lat0, lon0, h0)
 
-    # # Homography stuff
-    # R_alt = None
-    # homography_index = frame_index - frame_gap if frame_index > frame_gap + 1 else None
-    # if homography_index is not None:
-    #     image_base = images[homography_index - 1].copy()
-    #     lat_base = float(frame_info[homography_index]['latitude'])
-    #     long_base = float(frame_info[homography_index]['longitude'])
-    #     h_abs_base = float(frame_info[homography_index]['abs_alt'])
-    #     yaw_base = float(frame_info[homography_index]['gb_yaw'])
-    #     pitch_base = float(frame_info[homography_index]['gb_pitch'])
-    #     roll_base = float(frame_info[homography_index]['gb_roll'])
-
-    #     R_drone_base = yaw_pitch_roll_to_rotation_matrix(yaw_base, pitch_base, roll_base)
-    #     R_drone_base_T = np.transpose(R_drone_base)
-    #     easting_base, northing_base, h_enu_base = enu.geodetic2enu(lat_base, long_base, h_abs_base, lat0, lon0, h0)
-        
-    #     if distance_is_minimal(easting_base, northing_base, h_enu_base, easting, northing, h_enu):
-    #         image_base_gray = cv2.cvtColor(image_base, cv2.COLOR_BGR2GRAY)
-    #         H = get_homography(image_base_gray, image_gray, orb, bf)
-    #         R_hom = K_inv @ H @ K
-    #         R_alt = R_hom @ droneToCameraR @ R_drone_base_T @ mundoToDroneR
-
     t_drone_mundo = np.array([[easting], [northing], [h_enu]])
     graphics.print_on_pixel(image, f"index:{frame_index}, N:{int(northing)}, E:{int(easting)}, h_rel:{h_rel}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,0))
 
@@ -281,17 +248,6 @@ while not glfw.window_should_close(window):
     pixel_car = pixel_car / pixel_car[2]
     graphics.instantiate(image, K, R, t, t_car_mundo, "red", t_drone_mundo, pitch)
 
-    # # Homography stuff
-    # if R_alt is not None:
-    #     pixel_car_alt = K @ np.concatenate((R_alt, - R_alt @ t_drone_mundo), axis=1) @ np.vstack((t_car_mundo, [1]))
-    #     pixel_car_alt = pixel_car_alt.flatten()
-    #     pixel_car_alt = pixel_car_alt / pixel_car_alt[2]
-    #     desenhar_centro(image, int(pixel_car_alt[0]), int(pixel_car_alt[1]), (255,0,0))
-    #     print_on_pixel(image, f"N:{t_car_mundo[1,0]}, E:{t_car_mundo[0,0]}", int(pixel_car_alt[0]), int(pixel_car_alt[1]), (255,0,0))
-    #     t_car_opengl_alt = cameraToOpenglR @ R_alt @ (t_car_mundo - t_drone_mundo + [[0],[0],[cone_height]])
-    #     render(lambda: draw_cone_sphere(t_car_opengl_alt[0,0], t_car_opengl_alt[1,0], t_car_opengl_alt[2,0], pitch, "blue"))
-
-
     # Origem coordenada ENU
     graphics.instantiate(image, K, R, t, np.array([[0],[0],[0]]), "black", t_drone_mundo, pitch)
 
@@ -329,32 +285,6 @@ while not glfw.window_should_close(window):
     
     pixels = glReadPixels(0, 0, original_width, original_height, GL_RGB, GL_UNSIGNED_BYTE)
     image = graphics.draw_opengl(pixels, image)
-    
-    # # IA detection stuff
-    # short_image = cv2.resize(image, (int(original_width / scale_reduct_inference), int(original_height / scale_reduct_inference)))
-    # results = client.infer(short_image, model_id=f"{project_id}/{model_version}")
-
-    # for prediction in results['predictions']:
-                        
-    #     width, height = int(prediction['width'] * scale_reduct_inference), int(prediction['height'] * scale_reduct_inference)
-    #     prediction_x = int(prediction['x'] * scale_reduct_inference)
-    #     prediction_y = int(prediction['y'] * scale_reduct_inference)
-
-    #     x, y = int(prediction_x - width/2) , int(prediction_y - height/2)
-        
-    #     class_id = prediction['class_id']
-
-    #     # Calculate the bottom right x and y coordinates
-    #     x2 = int(x + width)
-    #     y2 = int(y + height)
-
-    #     if class_id == 0:
-    #         cv2.rectangle(image, (x, y), (x2, y2), (0, 0, 255), 3)
-    #         desenhar_centro(image, int(prediction_x), int(prediction_y), (0, 0, 255))
-
-    #         reta = reta3D(K_inv, droneToMundoR @ R_drone @ cameraToDroneR, t_drone_mundo, (prediction_x, prediction_y))
-    #         pred_UTM = find_ground_intersection_UTM(northing, easting, h, h_abs, reta[1])
-    #         print_on_pixel(image, f"N:{pred_UTM[1]}, E:{pred_UTM[0]}, ZN:{zone_number}, ZL:{zone_letter}", x, y, (0, 0, 255))
     
     cv2.imshow(window_name, image)
     cv2.setMouseCallback(window_name, mouse_click, (clicks, clicks_ENU))
