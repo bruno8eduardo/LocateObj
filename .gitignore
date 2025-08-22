@@ -1,2 +1,4 @@
 parameters.json
+parameters*.json
 *.MP4
+*.pyc
