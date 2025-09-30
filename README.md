@@ -105,4 +105,4 @@ python locate-obj.py
 | Action       | Effect                                                                                      |
 |--------------|---------------------------------------------------------------------------------------------|
 | **Left Click** | Instantiate a new **virtual object** at the clicked georeferenced location                 |
-| **Right Click** | Delete the **oldest virtual object** that was previously instantiated                 |
+| **Right Click** | Delete the **nearest virtual object** at the clicked georeferenced location                 |

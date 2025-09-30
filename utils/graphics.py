@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from OpenGL.GL import *
 from OpenGL.GLU import *
+from utils.geometry import Geometry
 
 class Graphics:
 
@@ -104,9 +105,7 @@ class Graphics:
         return resultado
 
     def instantiate(self, image, K, R, t, point, color, t_drone_ENU, pitch):
-        pixel = K @ np.concatenate((R, t), axis=1) @ np.vstack((point, [1]))
-        pixel = pixel.flatten()
-        pixel = pixel / pixel[2]
+        pixel = Geometry.get_pixel(K, R, t, point)
         if color == "red":
             colorN = (0,0,255)
         elif color == "black":

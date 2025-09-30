@@ -127,6 +127,9 @@ scale_reduct_inference = 6
 
 clicks = deque(maxlen=10)
 clicks_ENU = deque(maxlen=10)
+r_clicks = deque(maxlen=10)
+r_clicks_ENU = deque(maxlen=10)
+clicks_to_remove = []
 
 # Localizacao carro: [latitude: -22.905551] [longitude: -43.221218] [rel_alt: 2.847 abs_alt: 15.331] 15.331 - 2.847 = 12.484
 car_x, car_y, car_z = enu.geodetic2enu(-22.905551, -43.221218, 12.484, lat0, lon0, h0)
@@ -252,20 +255,8 @@ while not glfw.window_should_close(window):
     graphics.instantiate(image, K, R, t, np.array([[0],[0],[0]]), "black", t_drone_mundo, pitch)
 
     for click in clicks:
-        reta = geometry.reta3D(K_inv, geometry.droneToMundoR @ R_drone @ geometry.cameraToDroneR, t_drone_mundo, (click[0], click[1]))
-        # click_ENU = find_ground_intersection_ENU(northing, easting, h_enu, reta[1])
-        vec_DEM = geometry.norm_vec(reta[1].flatten())
-        if vec_DEM[2] < 0:
-            vec_DEM = (-1) * vec_DEM
-        if dem_elevation_data is not None:
-            click_ENU = geodetic.find_DEM_intersection(easting + utm0_x, northing + utm0_y, h_abs - h_dem_offset, vec_DEM)
-        else:
-            click_ENU = geodetic.find_ground_intersection_ENU(northing, easting, h_enu, vec_DEM)
+        click_ENU = geodetic.get_intersection_from_click(click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset)
         if click_ENU is not None:
-            if dem_elevation_data is not None:
-                click_ENU[0,0] -= utm0_x
-                click_ENU[1,0] -= utm0_y
-                click_ENU[2,0] += h_dem_offset - h0
             erro_car = np.linalg.norm(click_ENU - t_car_mundo)
             dist_drone = np.linalg.norm(t_drone_mundo - t_car_mundo)
             # Frame; Erro; Altura do Drone; Distância do Drone; Click ENU; Click Pixel; Car Pixel; Drone ENU
@@ -273,6 +264,39 @@ while not glfw.window_should_close(window):
             clicks_ENU.append(click_ENU)
 
     clicks.clear()
+
+    for r_click in r_clicks:
+        r_click_ENU = geodetic.get_intersection_from_click(r_click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset)
+        if r_click_ENU is not None:
+            r_clicks_ENU.append(r_click_ENU)
+
+    r_clicks.clear()
+
+    for r_click_ENU in r_clicks_ENU:
+        close_dist = 1e10
+        close_it = 0
+        for it, click_ENU in enumerate(clicks_ENU):
+            dist = np.linalg.norm(r_click_ENU - click_ENU)
+            if dist < close_dist:
+                close_it = it
+                close_dist = dist
+        clicks_to_remove.append(close_it)
+    r_clicks_ENU.clear()
+    
+    if len(clicks_to_remove) > 0:
+        clicks_to_remove.sort()
+        new_clicks_ENU = []
+        r_it = 0
+        for it, click_ENU in enumerate(clicks_ENU):
+            if it == clicks_to_remove[r_it]:
+                if r_it + 1 < len(clicks_to_remove):
+                    r_it = r_it + 1
+            else:
+                new_clicks_ENU.append(click_ENU)
+        
+        clicks_to_remove.clear()
+        clicks_ENU = deque(new_clicks_ENU, maxlen=10)
+    
     clicks_ENU_copy = clicks_ENU.copy()
 
     for enu_click in clicks_ENU_copy:
@@ -287,7 +311,7 @@ while not glfw.window_should_close(window):
     image = graphics.draw_opengl(pixels, image)
     
     cv2.imshow(window_name, image)
-    cv2.setMouseCallback(window_name, mouse_click, (clicks, clicks_ENU))
+    cv2.setMouseCallback(window_name, mouse_click, (clicks, r_clicks))
     
     end_frame = time.perf_counter_ns()
     frame_time = end_frame - start_frame

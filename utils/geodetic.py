@@ -1,4 +1,5 @@
 import numpy as np
+from utils.geometry import Geometry
 
 class Geodetic:
 
@@ -18,6 +19,28 @@ class Geodetic:
             return self.dem_elevation_data[row, col]
         else:
             return None  # Fora da imagem
+    
+    def get_intersection_from_click(self, click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset):
+        easting = t_drone_mundo[0,0]
+        northing = t_drone_mundo[1,0]
+        h_enu = t_drone_mundo[2,0]
+        reta = Geometry.reta3D(K_inv, Geometry.droneToMundoR @ R_drone @ Geometry.cameraToDroneR, t_drone_mundo, (click[0], click[1]))
+        # click_ENU = find_ground_intersection_ENU(northing, easting, h_enu, reta[1])
+        vec_DEM = Geometry.norm_vec(reta[1].flatten())
+        if vec_DEM[2] < 0:
+            vec_DEM = (-1) * vec_DEM
+        if dem_elevation_data is not None:
+            click_ENU = self.find_DEM_intersection(easting + utm0_x, northing + utm0_y, h_abs - h_dem_offset, vec_DEM)
+        else:
+            click_ENU = self.find_ground_intersection_ENU(northing, easting, h_enu, vec_DEM)
+        
+        if click_ENU is not None:
+            if dem_elevation_data is not None:
+                click_ENU[0,0] -= utm0_x
+                click_ENU[1,0] -= utm0_y
+                click_ENU[2,0] += h_dem_offset - h0
+        
+        return click_ENU
 
 
     def find_DEM_intersection(self, utm_east, utm_north, utm_up, vec_flat_norm):
