@@ -27,8 +27,16 @@ with open("parameters.json", "r") as json_file:
 
 K_path = parameters["K_path"]
 with open(K_path, "r") as json_file:
-    K = np.array(json.load(json_file), dtype=np.float64)
+    K_flat = np.array(json.load(json_file), dtype=np.float64)
 
+try:
+    dist_path = parameters["dist_path"]
+    with open(dist_path, "r") as json_file:
+        distort = np.array(json.load(json_file), dtype=np.float64)
+except Exception:
+    distort = None
+    print("Distortion coefficients: None")
+    
 original_width = parameters["video_width"]
 original_height = parameters["video_height"]
 
@@ -64,6 +72,18 @@ gresult = cv2.cuda.GpuMat()
 if cuda_count != 0:
     print("CUDA enabled")
     cuda_matcher = cv2.cuda.createTemplateMatching(cv2.CV_8UC1, cv2.TM_CCOEFF_NORMED)
+
+    if distort is not None:
+        K, _ = cv2.getOptimalNewCameraMatrix(K_flat, distort, (original_width, original_height), 1)
+        map1, map2 = cv2.initUndistortRectifyMap(K_flat, distort, None, K, (original_width, original_height), cv2.CV_32FC1)
+        map1_gpu = cv2.cuda_GpuMat()
+        map2_gpu = cv2.cuda_GpuMat()
+        map1_gpu.upload(map1)
+        map2_gpu.upload(map2)
+    else:
+        K = K_flat
+else:
+    K = K_flat
 
 # Criar janela OpenGL
 window = glfw.create_window(original_width, original_height, "Render 3D", None, None)
@@ -144,6 +164,11 @@ while not glfw.window_should_close(window):
 
     ret, image = cap.read()
     if ret:
+        if cuda_count != 0 and distort is not None:
+            frame_gpu = cv2.cuda_GpuMat()
+            frame_gpu.upload(image)
+            undistorted_gpu = cv2.cuda.remap(frame_gpu, map1_gpu, map2_gpu, interpolation=cv2.INTER_LINEAR)
+            image = undistorted_gpu.download()
         images.append(image)
     if play:
         frame_index += 1
