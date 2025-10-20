@@ -1,12 +1,22 @@
 import numpy as np
 from utils.geometry import Geometry
+import os
+import rasterio
+from rasterio.transform import rowcol
+import math
 
 class Geodetic:
 
-    def __init__(self, dem_elevation_data, dem_transform, dem_crs, dem_interception_epsilon = 0.01, dem_interception_count = 50):
+    def __init__(self, dem_elevation_data, dem_transform, dem_crs, enu_tif_path, dem_interception_epsilon = 0.01, dem_interception_count = 50):
         self.dem_elevation_data = dem_elevation_data
         self.dem_transform = dem_transform
         self.dem_crs = dem_crs
+        
+        self.enu_tif_path = enu_tif_path
+        self.enu_dem_elevation_data = None
+        self.enu_dem_transform = None
+        self.enu_dem_crs = None
+        self.enu_base_h = None
 
         self.dem_interception_epsilon = dem_interception_epsilon
         self.dem_interception_count = dem_interception_count
@@ -20,28 +30,99 @@ class Geodetic:
         else:
             return None  # Fora da imagem
     
+    def get_ENU_DEM_alt(self, east, north):
+        """
+        Consulta altura no DEM (enu_dem_elevation_data) dado east,north no mesmo CRS do transform.
+        Retorna float altitude ou None se fora da imagem / inválido.
+        - Usa rasterio.transform.rowcol para evitar ambiguidade de ordem.
+        - Usa floor (op='floor') para mapear coordenada para índice de pixel correspondente ao canto do pixel.
+        """
+        # checagens básicas
+        if np.isnan(east) or np.isnan(north):
+            print("NaN in input east/north")
+            return None
+
+        # rasterio.transform.rowcol(transform, xs, ys, op=...) devolve (row, col)
+        try:
+            # preferível usar rowcol com op=np.floor para maior determinismo
+            r, c = rowcol(self.enu_dem_transform, east, north, op=math.floor)
+        except Exception as e:
+            print("rowcol failed:", e)
+            return None
+
+        # validação de bounds
+        h, w = self.enu_dem_elevation_data.shape
+        if not (0 <= r < h and 0 <= c < w):
+            # Fora do raster
+            # opcional: detectar vizinhança próxima ao limite e clip
+            # print(f"Out of bounds: row={r}, col={c}, shape={enu_dem_elevation_data.shape}")
+            return None
+
+        val = self.enu_dem_elevation_data[r, c]
+        # Se nodata for NaN, retorna None
+        if np.isnan(val):
+            return None
+        return float(val)
+    
     def get_intersection_from_click(self, click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset):
         easting = t_drone_mundo[0,0]
         northing = t_drone_mundo[1,0]
         h_enu = t_drone_mundo[2,0]
         reta = Geometry.reta3D(K_inv, Geometry.droneToMundoR @ R_drone @ Geometry.cameraToDroneR, t_drone_mundo, (click[0], click[1]))
-        # click_ENU = find_ground_intersection_ENU(northing, easting, h_enu, reta[1])
+        click_ENU = None
+
         vec_DEM = Geometry.norm_vec(reta[1].flatten())
         if vec_DEM[2] < 0:
             vec_DEM = (-1) * vec_DEM
-        if dem_elevation_data is not None:
-            click_ENU = self.find_DEM_intersection(easting + utm0_x, northing + utm0_y, h_abs - h_dem_offset, vec_DEM)
-        else:
-            click_ENU = self.find_ground_intersection_ENU(northing, easting, h_enu, vec_DEM)
         
-        if click_ENU is not None:
-            if dem_elevation_data is not None:
+        if self.enu_dem_elevation_data is None:
+            if os.path.isfile(self.enu_tif_path):
+                with rasterio.open(self.enu_tif_path) as enu_dem_dataset:
+                    self.enu_dem_elevation_data = enu_dem_dataset.read(1)
+                    self.enu_dem_transform = enu_dem_dataset.transform
+                    self.enu_dem_crs = enu_dem_dataset.crs
+                    self.enu_base_h = self.get_ENU_DEM_alt(0, 0)
+
+        else:
+            click_ENU = self.find_ENU_DEM_intersection(easting, northing, h_enu, vec_DEM)
+            if click_ENU is not None:
+                click_ENU[2,0] -= self.enu_base_h
+                color = "blue"
+
+        if dem_elevation_data is not None and click_ENU is None:
+            click_ENU = self.find_DEM_intersection(easting + utm0_x, northing + utm0_y, h_abs - h_dem_offset, vec_DEM)
+            if click_ENU is not None:
                 click_ENU[0,0] -= utm0_x
                 click_ENU[1,0] -= utm0_y
                 click_ENU[2,0] += h_dem_offset - h0
+                color = "green"
         
-        return click_ENU
+        if click_ENU is None:
+            click_ENU = self.find_ground_intersection_ENU(northing, easting, h_enu, vec_DEM)
+            color = "red"
+        
+        return click_ENU, color
 
+
+    def find_ENU_DEM_intersection(self, east, north, up, vec_flat_norm):
+        count = 0
+        while True:
+            alt = self.get_ENU_DEM_alt(east, north)
+            if alt is None:
+                return None
+
+            gap = up - alt
+            if np.abs(gap) <= self.dem_interception_epsilon:
+                return np.array([[east], [north], [up]])
+
+            vec = gap * vec_flat_norm
+            east -= vec[0]
+            north -= vec[1]
+            up -= vec[2]
+
+            count += 1
+            if count > self.dem_interception_count:
+                return None
 
     def find_DEM_intersection(self, utm_east, utm_north, utm_up, vec_flat_norm):
         count = 0

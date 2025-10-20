@@ -40,15 +40,19 @@ except Exception:
 original_width = parameters["video_width"]
 original_height = parameters["video_height"]
 
+enu_tif_path = parameters["enu_tif_path"]
+
 try:
     tif_path = parameters["tif_path"]
+    dem_elevation_data = None
+    h_dem_offset = None
     with rasterio.open(tif_path) as dem_dataset:
         dem_elevation_data = dem_dataset.read(1)
         dem_transform = dem_dataset.transform
         dem_crs = dem_dataset.crs
-        geodetic = Geodetic(dem_elevation_data, dem_transform, dem_crs)
+        geodetic = Geodetic(dem_elevation_data, dem_transform, dem_crs, enu_tif_path)
 except Exception as e:
-    geodetic = Geodetic(None, None, None)
+    geodetic = Geodetic(None, None, None, enu_tif_path)
     print(f"Error: {e}\nConsidering flat terrain...")
 
 if dem_elevation_data is not None:
@@ -270,28 +274,29 @@ while not glfw.window_should_close(window):
     
     t =  - R @ t_drone_mundo
 
-    # Carro
-    pixel_car = K @ np.concatenate((R, t), axis=1) @ np.vstack((t_car_mundo, [1]))
-    pixel_car = pixel_car.flatten()
-    pixel_car = pixel_car / pixel_car[2]
-    graphics.instantiate(image, K, R, t, t_car_mundo, "red", t_drone_mundo, pitch)
+    # # Carro
+    # pixel_car = K @ np.concatenate((R, t), axis=1) @ np.vstack((t_car_mundo, [1]))
+    # pixel_car = pixel_car.flatten()
+    # pixel_car = pixel_car / pixel_car[2]
+    # graphics.instantiate(image, K, R, t, t_car_mundo, "red", t_drone_mundo, pitch)
 
     # Origem coordenada ENU
     graphics.instantiate(image, K, R, t, np.array([[0],[0],[0]]), "black", t_drone_mundo, pitch)
 
     for click in clicks:
-        click_ENU = geodetic.get_intersection_from_click(click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset)
+        click_ENU, color = geodetic.get_intersection_from_click(click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset)
         if click_ENU is not None:
             erro_car = np.linalg.norm(click_ENU - t_car_mundo)
             dist_drone = np.linalg.norm(t_drone_mundo - t_car_mundo)
             # Frame; Erro; Altura do Drone; Distância do Drone; Click ENU; Click Pixel; Car Pixel; Drone ENU
             # print(f"{frame_index}; {erro_car}; {h_rel}; {dist_drone}; {click_ENU.copy().flatten()}; {(click[0], click[1])}; {(pixel_car[0], pixel_car[1])}; {t_drone_mundo.copy().flatten()}")
-            clicks_ENU.append(click_ENU)
+            click_ENU_colored = (click_ENU, color)
+            clicks_ENU.append(click_ENU_colored)
 
     clicks.clear()
 
     for r_click in r_clicks:
-        r_click_ENU = geodetic.get_intersection_from_click(r_click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset)
+        r_click_ENU, _ = geodetic.get_intersection_from_click(r_click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset)
         if r_click_ENU is not None:
             r_clicks_ENU.append(r_click_ENU)
 
@@ -300,8 +305,9 @@ while not glfw.window_should_close(window):
     for r_click_ENU in r_clicks_ENU:
         close_dist = 1e10
         close_it = 0
-        for it, click_ENU in enumerate(clicks_ENU):
-            dist = np.linalg.norm(r_click_ENU - click_ENU)
+        for it, click_ENU_colored in enumerate(clicks_ENU):
+            click_enu, _ = click_ENU_colored
+            dist = np.linalg.norm(r_click_ENU - click_enu)
             if dist < close_dist:
                 close_it = it
                 close_dist = dist
@@ -312,23 +318,23 @@ while not glfw.window_should_close(window):
         clicks_to_remove.sort()
         new_clicks_ENU = []
         r_it = 0
-        for it, click_ENU in enumerate(clicks_ENU):
+        for it, click_ENU_colored in enumerate(clicks_ENU):
             if it == clicks_to_remove[r_it]:
                 if r_it + 1 < len(clicks_to_remove):
                     r_it = r_it + 1
             else:
-                new_clicks_ENU.append(click_ENU)
+                new_clicks_ENU.append(click_ENU_colored)
         
         clicks_to_remove.clear()
         clicks_ENU = deque(new_clicks_ENU, maxlen=10)
     
     clicks_ENU_copy = clicks_ENU.copy()
 
-    for enu_click in clicks_ENU_copy:
-        graphics.instantiate(image, K, R, t, enu_click, "blue", t_drone_mundo, pitch)
+    for enu_click_colored in clicks_ENU_copy:
+        graphics.instantiate(image, K, R, t, enu_click_colored[0], enu_click_colored[1], t_drone_mundo, pitch)
         if R_roi is not None:
-            graphics.instantiate(image, K, R_roi, - R_roi @ t_drone_mundo, enu_click, "green", t_drone_mundo, pitch)
-    
+            graphics.instantiate(image, K, R_roi, - R_roi @ t_drone_mundo, enu_click_colored[0], enu_click_colored[1], t_drone_mundo, pitch)
+
     glfw.poll_events()
     glfw.swap_buffers(window)
     
