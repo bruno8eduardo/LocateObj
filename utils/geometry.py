@@ -155,3 +155,10 @@ class Geometry:
             rot_vec = theta_op * v
             R_theta, _ = cv2.Rodrigues(rot_vec)
             return theta_op, R_theta
+    
+    @staticmethod
+    def angle_Rs(R1, R2):
+        R_diff = np.transpose(R1) @ R2
+        cos_diff = (np.trace(R_diff) - 1) / 2.0
+        angle = np.arccos(cos_diff)
+        return np.degrees(angle)

@@ -11,6 +11,7 @@ import utm
 from utils.graphics import Graphics
 from utils.geodetic import Geodetic
 from utils.geometry import Geometry
+from utils.reconstruction_client import ReconstructionClient
 from utils.parse_dji import parse_srt
 from utils.ui import *
 import time
@@ -161,12 +162,14 @@ t_car_mundo = np.array([[car_x],[car_y],[car_z]])
 
 play = True
 images = []
+original_images = []
 while not glfw.window_should_close(window):
     start_frame = time.perf_counter_ns()
     
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
     ret, image = cap.read()
+    original_images.append(image.copy())
     if ret:
         if cuda_count != 0 and distort is not None:
             frame_gpu = cv2.cuda_GpuMat()
@@ -205,6 +208,7 @@ while not glfw.window_should_close(window):
         play = not play
     
     image = images[frame_index - 1 if frame_index > 0 else 0].copy()
+    original_image = original_images[frame_index - 1 if frame_index > 0 else 0].copy()
     image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     roi_pixel_list.clear()
     roi_confidence_list.clear()
@@ -229,6 +233,10 @@ while not glfw.window_should_close(window):
     graphics.print_on_pixel(image, f"index:{frame_index}, N:{int(northing)}, E:{int(easting)}, h_rel:{h_rel}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,0))
 
     R = geometry.droneToCameraR @ R_drone_T @ geometry.mundoToDroneR
+
+    accepted_frame, sended_frame = ReconstructionClient.choose_frames_for_rec(original_image, t_drone_mundo, R)
+    if accepted_frame:
+        print(f"Frame index: {frame_index}, Sended: {sended_frame}")
 
     if get_roi:
         rois = cv2.selectROIs("Select ROIs", image)
