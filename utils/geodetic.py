@@ -1,3 +1,4 @@
+import threading
 import numpy as np
 from utils.geometry import Geometry
 import os
@@ -64,6 +65,20 @@ class Geodetic:
             return None
         return float(val)
     
+    def update_ENU_DEM(self):
+        try:
+            if os.path.isfile(self.enu_tif_path):
+                with rasterio.open(self.enu_tif_path) as enu_dem_dataset:
+                    self.enu_dem_elevation_data = enu_dem_dataset.read(1)
+                    self.enu_dem_transform = enu_dem_dataset.transform
+                    self.enu_dem_crs = enu_dem_dataset.crs
+                    self.enu_base_h = self.get_ENU_DEM_alt(0, 0)
+                    print("Updated ENU DEM data.")
+            else:
+                print(f"ENU DEM file not found: {self.enu_tif_path}")
+        except Exception as e:
+            print(f"Error updating ENU DEM: {e}")
+
     def get_intersection_from_click(self, click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset):
         easting = t_drone_mundo[0,0]
         northing = t_drone_mundo[1,0]
@@ -76,17 +91,11 @@ class Geodetic:
             vec_DEM = (-1) * vec_DEM
         
         if self.enu_dem_elevation_data is None:
-            if os.path.isfile(self.enu_tif_path):
-                with rasterio.open(self.enu_tif_path) as enu_dem_dataset:
-                    self.enu_dem_elevation_data = enu_dem_dataset.read(1)
-                    self.enu_dem_transform = enu_dem_dataset.transform
-                    self.enu_dem_crs = enu_dem_dataset.crs
-                    self.enu_base_h = self.get_ENU_DEM_alt(0, 0)
-
+            threading.Thread(target=self.update_ENU_DEM).start()
         else:
             click_ENU = self.find_ENU_DEM_intersection(easting, northing, h_enu, vec_DEM)
             if click_ENU is not None:
-                click_ENU[2,0] -= self.enu_base_h
+                click_ENU[2,0] -= self.enu_base_h if self.enu_base_h is not None else 0
                 color = "blue"
 
         if dem_elevation_data is not None and click_ENU is None:

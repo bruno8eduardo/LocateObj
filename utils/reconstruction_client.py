@@ -9,12 +9,15 @@ from collections import deque
 class ReconstructionClient:
 
     connectionString = "tcp://127.0.0.1:5555"
+    context = zmq.Context()
 
     max_items = 7
 
     img_list = deque(maxlen=max_items)
     t_world_list = deque(maxlen=max_items)
     R_list = deque(maxlen=max_items)
+
+    geodetic = None
 
     @staticmethod
     def choose_frames_for_rec(img, t_world, R):
@@ -56,8 +59,7 @@ class ReconstructionClient:
     @staticmethod
     def send_images_with_metadata():
 
-        context = zmq.Context()
-        socket = context.socket(zmq.REQ)
+        socket = ReconstructionClient.context.socket(zmq.REQ)
         socket.connect(ReconstructionClient.connectionString)
 
         meta = {
@@ -73,3 +75,6 @@ class ReconstructionClient:
         # Recebe resposta
         reply = socket.recv_string()
         print("Servidor respondeu:", reply)
+
+        if ReconstructionClient.geodetic is not None:
+            threading.Thread(target=ReconstructionClient.geodetic.update_ENU_DEM).start()

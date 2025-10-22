@@ -56,6 +56,8 @@ except Exception as e:
     geodetic = Geodetic(None, None, None, enu_tif_path)
     print(f"Error: {e}\nConsidering flat terrain...")
 
+ReconstructionClient.geodetic = geodetic
+
 if dem_elevation_data is not None:
     h0_dem = geodetic.get_DEM_alt(utm0_x, utm0_y)
     if h0_dem is not None:
