@@ -48,7 +48,9 @@ class ReconstructionClient:
 
         if len(ReconstructionClient.img_list) > 3:
             try:
-                threading.Thread(target=ReconstructionClient.send_images_with_metadata).start()
+                t = threading.Thread(target=ReconstructionClient.send_images_with_metadata)
+                t.daemon = True
+                t.start()
             except Exception as e:
                 print(f"Error starting thread: {e}")
             return True, True
@@ -77,4 +79,6 @@ class ReconstructionClient:
         print("Servidor respondeu:", reply)
 
         if ReconstructionClient.geodetic is not None:
-            threading.Thread(target=ReconstructionClient.geodetic.update_ENU_DEM).start()
+            t = threading.Thread(target=ReconstructionClient.geodetic.update_ENU_DEM)
+            t.daemon = True
+            t.start()

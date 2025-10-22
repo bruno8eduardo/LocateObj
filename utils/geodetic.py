@@ -91,7 +91,9 @@ class Geodetic:
             vec_DEM = (-1) * vec_DEM
         
         if self.enu_dem_elevation_data is None:
-            threading.Thread(target=self.update_ENU_DEM).start()
+            t = threading.Thread(target=self.update_ENU_DEM)
+            t.daemon = True
+            t.start()
         else:
             click_ENU = self.find_ENU_DEM_intersection(easting, northing, h_enu, vec_DEM)
             if click_ENU is not None:
