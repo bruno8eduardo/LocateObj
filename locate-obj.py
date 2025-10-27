@@ -236,7 +236,7 @@ while not glfw.window_should_close(window):
 
     R = geometry.droneToCameraR @ R_drone_T @ geometry.mundoToDroneR
 
-    accepted_frame, sended_frame = ReconstructionClient.choose_frames_for_rec(original_image, t_drone_mundo, R)
+    accepted_frame, sended_frame = ReconstructionClient.choose_frames_for_rec(original_image, t_drone_mundo, R, frame_index)
     if accepted_frame:
         print(f"Frame index: {frame_index}, Sended: {sended_frame}")
 

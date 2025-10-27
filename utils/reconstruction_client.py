@@ -20,7 +20,7 @@ class ReconstructionClient:
     geodetic = None
 
     @staticmethod
-    def choose_frames_for_rec(img, t_world, R):
+    def choose_frames_for_rec(img, t_world, R, frame_index=None):
 
         img = cv2.imencode(".png", img)[1]
         img = img.tobytes()
@@ -36,10 +36,7 @@ class ReconstructionClient:
             distance = np.linalg.norm(t_world - ReconstructionClient.t_world_list[i])
             rec_h = ReconstructionClient.t_world_list[i][2,0]
             distance_test = distance > 0.2 * rec_h
-            angle = Geometry.angle_Rs(ReconstructionClient.R_list[i], R)
-            angular_test = angle > 10
-            test = distance_test or angular_test
-            if not test:
+            if not distance_test:
                 return False, False
         
         ReconstructionClient.img_list.append(img)
@@ -48,7 +45,7 @@ class ReconstructionClient:
 
         if len(ReconstructionClient.img_list) > 3:
             try:
-                t = threading.Thread(target=ReconstructionClient.send_images_with_metadata)
+                t = threading.Thread(target=ReconstructionClient.send_images_with_metadata, args=(frame_index,))
                 t.daemon = True
                 t.start()
             except Exception as e:
@@ -59,7 +56,7 @@ class ReconstructionClient:
 
 
     @staticmethod
-    def send_images_with_metadata():
+    def send_images_with_metadata(index=None):
 
         socket = ReconstructionClient.context.socket(zmq.REQ)
         socket.connect(ReconstructionClient.connectionString)
@@ -76,7 +73,7 @@ class ReconstructionClient:
 
         # Recebe resposta
         reply = socket.recv_string()
-        print("Servidor respondeu:", reply)
+        print(f"Index {index}:", reply)
 
         if ReconstructionClient.geodetic is not None:
             t = threading.Thread(target=ReconstructionClient.geodetic.update_ENU_DEM)
