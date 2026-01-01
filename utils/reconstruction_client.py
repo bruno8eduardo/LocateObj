@@ -17,10 +17,14 @@ class ReconstructionClient:
     t_world_list = deque(maxlen=max_items)
     R_list = deque(maxlen=max_items)
 
+    lat0 = None
+    lon0 = None
+    h0 = None
+
     geodetic = None
 
     @staticmethod
-    def choose_frames_for_rec(img, t_world, R, frame_index=None):
+    def choose_frames_for_rec(img, t_world, R, lat0, lon0, h0, frame_index=None):
 
         img = cv2.imencode(".png", img)[1]
         img = img.tobytes()
@@ -45,7 +49,7 @@ class ReconstructionClient:
 
         if len(ReconstructionClient.img_list) > 3:
             try:
-                t = threading.Thread(target=ReconstructionClient.send_images_with_metadata, args=(frame_index,))
+                t = threading.Thread(target=ReconstructionClient.send_images_with_metadata, args=(lat0, lon0, h0, frame_index,))
                 t.daemon = True
                 t.start()
             except Exception as e:
@@ -56,7 +60,7 @@ class ReconstructionClient:
 
 
     @staticmethod
-    def send_images_with_metadata(index=None):
+    def send_images_with_metadata(lat0, lon0, h0, index=None):
 
         socket = ReconstructionClient.context.socket(zmq.REQ)
         socket.connect(ReconstructionClient.connectionString)
@@ -64,7 +68,10 @@ class ReconstructionClient:
         meta = {
             "num_images": len(ReconstructionClient.img_list),
             "R_drone_list": [r.tolist() for r in ReconstructionClient.R_list],
-            "T_drone_list": [t.tolist() for t in ReconstructionClient.t_world_list]
+            "T_drone_list": [t.tolist() for t in ReconstructionClient.t_world_list],
+            "lat0": lat0,
+            "lon0": lon0,
+            "h0": h0
         }
 
         # Prepare multipart message: first part is meta, rest are images
