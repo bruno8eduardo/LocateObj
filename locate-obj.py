@@ -39,6 +39,10 @@ except Exception:
     
 original_width = parameters["video_width"]
 original_height = parameters["video_height"]
+default_focal_len = parameters["default_focal_len"]
+
+dem_elevation_data = None
+h_dem_offset = None
 
 try:
     tif_path = parameters["tif_path"]
@@ -74,16 +78,16 @@ if cuda_count != 0:
     cuda_matcher = cv2.cuda.createTemplateMatching(cv2.CV_8UC1, cv2.TM_CCOEFF_NORMED)
 
     if distort is not None:
-        K, _ = cv2.getOptimalNewCameraMatrix(K_flat, distort, (original_width, original_height), 1)
-        map1, map2 = cv2.initUndistortRectifyMap(K_flat, distort, None, K, (original_width, original_height), cv2.CV_32FC1)
+        K_base, _ = cv2.getOptimalNewCameraMatrix(K_flat, distort, (original_width, original_height), 1)
+        map1, map2 = cv2.initUndistortRectifyMap(K_flat, distort, None, K_base, (original_width, original_height), cv2.CV_32FC1)
         map1_gpu = cv2.cuda_GpuMat()
         map2_gpu = cv2.cuda_GpuMat()
         map1_gpu.upload(map1)
         map2_gpu.upload(map2)
     else:
-        K = K_flat
+        K_base = K_flat
 else:
-    K = K_flat
+    K_base = K_flat
 
 # Criar janela OpenGL
 window = glfw.create_window(original_width, original_height, "Render 3D", None, None)
@@ -113,12 +117,6 @@ glLightfv(GL_LIGHT0, GL_SPECULAR, light_specular)
 # Ativar normalização de vetores normais (evita distorções)
 glEnable(GL_NORMALIZE)
 
-# Configurar matriz de projeção
-proj_matrix = graphics.build_projection_matrix(K, original_width, original_height)
-glMatrixMode(GL_PROJECTION)
-glLoadMatrixf(np.transpose(proj_matrix))
-
-K_inv = geometry.inv_K(K)
 
 project_id = "car-models-rr7w5"
 model_version = 1
@@ -207,6 +205,21 @@ while not glfw.window_should_close(window):
     good_roi_list.clear()
     good_roi_data_list.clear()
     R_roi = None
+
+    if default_focal_len is not None:
+        focal_len = float(frame_info[frame_index]['focal_len'])
+        zoom = focal_len / default_focal_len
+
+        K = K_base @ np.diag([zoom, zoom, 1])
+    else:
+        K = K_base
+
+    # Configurar matriz de projeção
+    proj_matrix = graphics.build_projection_matrix(K, original_width, original_height)
+    glMatrixMode(GL_PROJECTION)
+    glLoadMatrixf(np.transpose(proj_matrix))
+
+    K_inv = geometry.inv_K(K)
 
     yaw = float(frame_info[frame_index]['gb_yaw'])
     pitch = float(frame_info[frame_index]['gb_pitch'])
