@@ -120,11 +120,11 @@ class Geodetic:
         while True:
             alt = self.get_ENU_DEM_alt(east, north)
             if alt is None:
-                return None
-
-            gap = up - alt
-            if np.abs(gap) <= self.dem_interception_epsilon:
-                return np.array([[east], [north], [up]])
+                gap = up / 2
+            else:
+                gap = up - alt
+                if np.abs(gap) <= self.dem_interception_epsilon:
+                    return np.array([[east], [north], [up]])
 
             vec = gap * vec_flat_norm
             east -= vec[0]
