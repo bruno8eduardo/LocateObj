@@ -278,6 +278,17 @@ while not glfw.window_should_close(window):
     easting, northing, h_enu = enu.geodetic2enu(lat, long, h_abs, lat0, lon0, h0)
 
     t_drone_mundo = np.array([[easting], [northing], [h_enu]])
+
+    # # Estima velocidade no frame
+    # if frame_index > 1 and frame_index % 50 == 1:
+    #     h_abs_ant = float(frame_info[frame_index-1]['abs_alt'])
+    #     lat_ant = float(frame_info[frame_index-1]['latitude'])
+    #     long_ant = float(frame_info[frame_index-1]['longitude'])
+    #     easting_ant, northing_ant, h_enu_ant = enu.geodetic2enu(lat_ant, long_ant, h_abs_ant, lat0, lon0, h0)
+    #     t_drone_mundo_ant = np.array([[easting_ant], [northing_ant], [h_enu_ant]])
+    #     vel = np.linalg.norm(t_drone_mundo - t_drone_mundo_ant) / (frame_info[frame_index]["diff_time_ms"] * 1e-3)
+    #     print(f"Frame: {frame_index}; Velocidade estimada: {vel} m/s")
+
     graphics.print_on_pixel(image, f"index:{frame_index}, Dist:{round(np.linalg.norm(t_drone_mundo), 2)}, N:{int(northing)}, E:{int(easting)}, h_rel:{h_rel}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,120))
 
     R = geometry.droneToCameraR @ R_drone_T @ geometry.mundoToDroneR
