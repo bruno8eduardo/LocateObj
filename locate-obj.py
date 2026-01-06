@@ -289,6 +289,16 @@ while not glfw.window_should_close(window):
     #     vel = np.linalg.norm(t_drone_mundo - t_drone_mundo_ant) / (frame_info[frame_index]["diff_time_ms"] * 1e-3)
     #     print(f"Frame: {frame_index}; Velocidade estimada: {vel} m/s")
 
+    # # Estima velocidade angular no frame
+    # if frame_index > 1 and frame_index % 50 == 1:
+    #     yaw_ant = float(frame_info[frame_index-1]['gb_yaw'])
+    #     pitch_ant = float(frame_info[frame_index-1]['gb_pitch'])
+    #     roll_ant = float(frame_info[frame_index-1]['gb_roll'])
+    #     R_drone_ant = geometry.yaw_pitch_roll_to_rotation_matrix(yaw_ant, pitch_ant, roll_ant)
+    #     vel_ang = np.abs(geometry.angle_Rs(R_drone, R_drone_ant)) / (frame_info[frame_index]["diff_time_ms"] * 1e-3)
+    #     # print(f"Frame: {frame_index}; Velocidade angular estimada: {vel_ang} degrees/s")
+    #     print(f"{frame_index}; {vel_ang}")
+
     graphics.print_on_pixel(image, f"index:{frame_index}, Dist:{round(np.linalg.norm(t_drone_mundo), 2)}, N:{int(northing)}, E:{int(easting)}, h_rel:{h_rel}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,120))
 
     R = geometry.droneToCameraR @ R_drone_T @ geometry.mundoToDroneR

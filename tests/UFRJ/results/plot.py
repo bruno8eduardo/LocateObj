@@ -46,7 +46,7 @@ if tuple_cols:
     df["Pixels"] = np.hypot(df[xcol] - cx, df[ycol] - cy)
 
 # Criar duas figuras
-fig, axs = plt.subplots(5, 1, figsize=(10, 8), sharex=True)  # Dois gráficos na vertical
+fig, axs = plt.subplots(6, 1, figsize=(10, 8), sharex=True)  # Dois gráficos na vertical
 
 # Gráfico 1: Somente a Coluna 2
 axs[0].plot(df.index, df.iloc[:, 0], label=df.columns[0], color="red")
@@ -63,9 +63,16 @@ axs[2].legend()
 axs[2].grid(True)
 
 # Gráfico 1: Somente a Coluna 5
-axs[4].plot(df.index, df.iloc[:, 3], label=df.columns[3], color="orange")
-axs[4].set_ylabel("")
-axs[4].set_title("Zoom")
+axs[5].plot(df.index, df.iloc[:, 3], label=df.columns[3], color="orange")
+axs[5].set_ylabel("")
+axs[5].set_title("Zoom")
+axs[5].legend()
+axs[5].grid(True)
+
+# Gráfico 1: Somente a Coluna 11
+axs[4].plot(df.index, df.iloc[:, 9], label=df.columns[9], color="purple")
+axs[4].set_ylabel("graus/s")
+axs[4].set_title("Velocidade Angular (graus/s)")
 axs[4].legend()
 axs[4].grid(True)
 
