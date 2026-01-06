@@ -33,6 +33,7 @@ class ReconstructionClient:
             ReconstructionClient.img_list.append(img)
             ReconstructionClient.t_world_list.append(t_world)
             ReconstructionClient.R_list.append(R)
+            print(f"Frame index: {frame_index}, Sended: {False}")
             return True, False
 
         for i in range(0, len(ReconstructionClient.img_list)):
@@ -54,8 +55,10 @@ class ReconstructionClient:
                 t.start()
             except Exception as e:
                 print(f"Error starting thread: {e}")
+            print(f"Frame index: {frame_index}, Sended: {True}")
             return True, True
 
+        print(f"Frame index: {frame_index}, Sended: {False}")
         return True, False
 
 

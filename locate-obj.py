@@ -15,6 +15,7 @@ from utils.reconstruction_client import ReconstructionClient
 from utils.parse_dji import parse_srt
 from utils.ui import *
 import time
+import threading
 
 # Voo QBV
 # lat0 = -22.905812 
@@ -281,9 +282,8 @@ while not glfw.window_should_close(window):
 
     R = geometry.droneToCameraR @ R_drone_T @ geometry.mundoToDroneR
 
-    accepted_frame, sended_frame = ReconstructionClient.choose_frames_for_rec(original_image, t_drone_mundo, R, lat0, lon0, h0, frame_index)
-    if accepted_frame:
-        print(f"Frame index: {frame_index}, Sended: {sended_frame}")
+    t_rec_server = threading.Thread(target=ReconstructionClient.choose_frames_for_rec, args=(original_image, t_drone_mundo, R, lat0, lon0, h0, frame_index,), daemon=True)
+    t_rec_server.start()
 
     if get_roi:
         rois = cv2.selectROIs("Select ROIs", image)
