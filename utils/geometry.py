@@ -25,6 +25,26 @@ class Geometry:
         return K_inv
     
     @staticmethod
+    def undistort_point_fast(xd, yd, k1, k2, p1, p2, k3, iters=5):
+        x = xd
+        y = yd
+
+        for _ in range(iters):
+            r2 = x*x + y*y
+            r4 = r2*r2
+            r6 = r4*r2
+
+            rad = 1.0 + k1*r2 + k2*r4 + k3*r6
+
+            dx = 2.0*p1*x*y + p2*(r2 + 2.0*x*x)
+            dy = p1*(r2 + 2.0*y*y) + 2.0*p2*x*y
+
+            x = (xd - dx) / rad
+            y = (yd - dy) / rad
+
+        return x, y
+    
+    @staticmethod
     def get_pixel(K, R, t, point):
         pixel = K @ np.concatenate((R, t), axis=1) @ np.vstack((point, [1]))
         pixel = pixel.flatten()

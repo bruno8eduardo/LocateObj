@@ -79,14 +79,24 @@ class Geodetic:
         except Exception as e:
             print(f"Error updating ENU DEM: {e}")
 
-    def get_intersection_from_click(self, click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset):
+    def get_intersection_from_click(self, click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset, dist_coeff=None):
         easting = t_drone_mundo[0,0]
         northing = t_drone_mundo[1,0]
         h_enu = t_drone_mundo[2,0]
-        reta = Geometry.reta3D(K_inv, Geometry.droneToMundoR @ R_drone @ Geometry.cameraToDroneR, t_drone_mundo, (click[0], click[1]))
+        R_T = Geometry.droneToMundoR @ R_drone @ Geometry.cameraToDroneR
+        reta = Geometry.reta3D(K_inv, R_T, t_drone_mundo, (click[0], click[1]))
         click_ENU = None
+        v=reta[1]
 
-        vec_DEM = Geometry.norm_vec(reta[1].flatten())
+        if dist_coeff is not None:
+            p_d = K_inv @ np.array([[click[0]], [click[1]], [1]])
+            x_ud, y_ud = Geometry.undistort_point_fast(p_d[0,0], p_d[1,0], *dist_coeff)
+            v = R_T @ np.array([[x_ud], [y_ud], [1]])
+        else:
+            reta = Geometry.reta3D(K_inv, R_T, t_drone_mundo, (click[0], click[1]))
+            v = reta[1]
+
+        vec_DEM = Geometry.norm_vec(v.flatten())
         if vec_DEM[2] < 0:
             vec_DEM = (-1) * vec_DEM
         

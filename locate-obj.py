@@ -101,9 +101,12 @@ if cuda_count != 0:
         map2_gpu = cv2.cuda_GpuMat()
         map1_gpu.upload(map1)
         map2_gpu.upload(map2)
+        dist_coeff = None
     else:
+        dist_coeff = distort
         K_base = K_flat
 else:
+    dist_coeff = distort
     K_base = K_flat
 
 # Criar janela OpenGL
@@ -372,7 +375,7 @@ while not glfw.window_should_close(window):
     graphics.instantiate(image, K, R, t, np.array([[0],[0],[0]]), "black", t_drone_mundo, pitch)
 
     for click in clicks:
-        click_ENU, color = geodetic.get_intersection_from_click(click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset)
+        click_ENU, color = geodetic.get_intersection_from_click(click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset, dist_coeff=dist_coeff)
         if click_ENU is not None:
             erro_ponto2 = np.linalg.norm(click_ENU - t_p2_mundo)
             dist_drone = np.linalg.norm(t_drone_mundo - t_p2_mundo)
@@ -384,7 +387,7 @@ while not glfw.window_should_close(window):
     clicks.clear()
 
     for r_click in r_clicks:
-        r_click_ENU, _ = geodetic.get_intersection_from_click(r_click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset)
+        r_click_ENU, _ = geodetic.get_intersection_from_click(r_click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset, dist_coeff=dist_coeff)
         if r_click_ENU is not None:
             r_clicks_ENU.append(r_click_ENU)
 
