@@ -51,6 +51,8 @@ class Graphics:
             color_array = [0.0, 1.0, 0.0, 1.0]
         elif color == "black":
             color_array = [0.1, 0.1, 0.1, 1.0]
+        elif color == "yellow":
+            color_array = [1.0, 1.0, 0.0, 1.0]
 
         # Esfera vermelha
         glMaterialfv(GL_FRONT, GL_AMBIENT, color_array)
@@ -114,6 +116,8 @@ class Graphics:
             colorN = (255,0,0)
         elif color == "green":
             colorN = (0,255,0)
+        elif color == "yellow":
+            colorN = (0,255,255)
 
         self.desenhar_centro(image, int(pixel[0]), int(pixel[1]), colorN)
         self.print_on_pixel(image, f"N:{point[1,0]:.3f}, E:{point[0,0]:.3f}, Up: {point[2,0]:.3f}", int(pixel[0]), int(pixel[1]), colorN)

@@ -1,0 +1,9 @@
+RTK Base Station (ENU Origin):
+    Latitude: -22.863223291
+    Longitude: -43.222068679
+    Altitude: -2.103
+
+White Landing Square:
+    Latitude: -22.863262917
+    Longitude: -43.221994540
+    Altitude: -3.623

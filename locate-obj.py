@@ -11,16 +11,27 @@ import utm
 from utils.graphics import Graphics
 from utils.geodetic import Geodetic
 from utils.geometry import Geometry
+from utils.reconstruction_client import ReconstructionClient
 from utils.parse_dji import parse_srt
 from utils.ui import *
 import time
+import threading
 
-lat0 = -22.905812 
-lon0 = -43.221329
-h0 = 12.456
+# Voo QBV
+# lat0 = -22.905812 
+# lon0 = -43.221329
+# h0 = 12.456
+# utm0_x, utm0_y, utm_zn, utm_zl = utm.from_latlon(lat0, lon0)
+
+# Voo UFRJ
+# Base RTK: lat: -22.863223291 lon: -43.222068679 alt: -2.103
+lat0 = -22.863223291
+lon0 = -43.222068679
+h0 = -2.103
 utm0_x, utm0_y, utm_zn, utm_zl = utm.from_latlon(lat0, lon0)
 
 roi_minimum_confidence = 0.65
+enable_video_navigation = True
 
 with open("parameters.json", "r") as json_file:
     parameters = json.load(json_file)
@@ -44,16 +55,22 @@ default_focal_len = parameters["default_focal_len"]
 dem_elevation_data = None
 h_dem_offset = None
 
+enu_tif_path = parameters["enu_tif_path"]
+
 try:
     tif_path = parameters["tif_path"]
+    dem_elevation_data = None
+    h_dem_offset = None
     with rasterio.open(tif_path) as dem_dataset:
         dem_elevation_data = dem_dataset.read(1)
         dem_transform = dem_dataset.transform
         dem_crs = dem_dataset.crs
-        geodetic = Geodetic(dem_elevation_data, dem_transform, dem_crs)
+        geodetic = Geodetic(dem_elevation_data, dem_transform, dem_crs, enu_tif_path)
 except Exception as e:
-    geodetic = Geodetic(None, None, None)
+    geodetic = Geodetic(None, None, None, enu_tif_path)
     print(f"Error: {e}\nConsidering flat terrain...")
+
+ReconstructionClient.geodetic = geodetic
 
 if dem_elevation_data is not None:
     h0_dem = geodetic.get_DEM_alt(utm0_x, utm0_y)
@@ -84,9 +101,12 @@ if cuda_count != 0:
         map2_gpu = cv2.cuda_GpuMat()
         map1_gpu.upload(map1)
         map2_gpu.upload(map2)
+        dist_coeff = None
     else:
+        dist_coeff = distort
         K_base = K_flat
 else:
+    dist_coeff = distort
     K_base = K_flat
 
 # Criar janela OpenGL
@@ -149,56 +169,81 @@ r_clicks = deque(maxlen=10)
 r_clicks_ENU = deque(maxlen=10)
 clicks_to_remove = []
 
+# Voo UFRJ
+# Base RTK: lat: -22.863223291 lon: -43.222068679 alt: -2.103
+# Ponto 1:  lat: -22.863169280 lon: -43.221932913 alt: -3.65
+# Ponto 2 (White Landing Square):  lat: -22.863262917 lon: -43.221994540 alt: -3.623
+# Ponto 3:  lat: -22.863268938 lon: -43.221956110 alt: -3.7
+
+ponto1_x, ponto1_y, ponto1_z = enu.geodetic2enu(-22.863169280, -43.221932913, -3.65, lat0, lon0, h0)
+t_p1_mundo = np.array([[ponto1_x],[ponto1_y],[ponto1_z]])
+ponto2_x, ponto2_y, ponto2_z = enu.geodetic2enu(-22.863262917, -43.221994540, -3.623, lat0, lon0, h0)
+t_p2_mundo = np.array([[ponto2_x],[ponto2_y],[ponto2_z]])
+ponto3_x, ponto3_y, ponto3_z = enu.geodetic2enu(-22.863268938, -43.221956110, -3.7, lat0, lon0, h0)
+t_p3_mundo = np.array([[ponto3_x],[ponto3_y],[ponto3_z]])
+
 # Localizacao carro: [latitude: -22.905551] [longitude: -43.221218] [rel_alt: 2.847 abs_alt: 15.331] 15.331 - 2.847 = 12.484
 car_x, car_y, car_z = enu.geodetic2enu(-22.905551, -43.221218, 12.484, lat0, lon0, h0)
 t_car_mundo = np.array([[car_x],[car_y],[car_z]])
 
 play = True
 images = []
+original_images = []
 while not glfw.window_should_close(window):
     start_frame = time.perf_counter_ns()
     
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
     ret, image = cap.read()
+    original_image = image.copy() if image is not None else None
     if ret:
         if cuda_count != 0 and distort is not None:
             frame_gpu = cv2.cuda_GpuMat()
             frame_gpu.upload(image)
             undistorted_gpu = cv2.cuda.remap(frame_gpu, map1_gpu, map2_gpu, interpolation=cv2.INTER_LINEAR)
             image = undistorted_gpu.download()
-        images.append(image)
-    if play:
-        frame_index += 1
-    if frame_index >= len(frame_info):
-        frame_index = 1
 
-    key = cv2.waitKey(1)
-    if key & 0xFF == ord('q'):
-        break
-    elif key & 0xFF == ord('d'):
-        if frame_index + 1 < len(images):
+    if enable_video_navigation:
+
+        if image is not None:
+            original_images.append(original_image)
+            images.append(image)
+        
+        if play:
             frame_index += 1
-        continue
-    elif key & 0xFF == ord('f'):
-        if frame_index + 10 < len(images):
-            frame_index += 10
-        continue
-    elif key & 0xFF == ord('a'):
-        frame_index -= 10
-        if frame_index < 1:
+        if frame_index >= len(frame_info):
             frame_index = 1
-        continue
-    elif key & 0xFF == ord('g'):
-        graphics.glMode = not graphics.glMode
-        continue
-    elif key & 0xFF == ord('s'):
-        get_roi = True
-        continue
-    elif key & 0xFF == ord(' '):
-        play = not play
-    
-    image = images[frame_index - 1 if frame_index > 0 else 0].copy()
+
+        key = cv2.waitKey(1)
+        if key & 0xFF == ord('q'):
+            break
+        elif key & 0xFF == ord('d'):
+            if frame_index + 1 < len(images):
+                frame_index += 1
+            continue
+        elif key & 0xFF == ord('f'):
+            if frame_index + 10 < len(images):
+                frame_index += 10
+            continue
+        elif key & 0xFF == ord('a'):
+            frame_index -= 10
+            if frame_index < 1:
+                frame_index = 1
+            continue
+        elif key & 0xFF == ord('g'):
+            graphics.glMode = not graphics.glMode
+            continue
+        elif key & 0xFF == ord('s'):
+            get_roi = True
+            continue
+        elif key & 0xFF == ord(' '):
+            play = not play
+        elif key & 0xFF == ord('m'):
+            enable_video_navigation = False
+        
+        image = images[frame_index - 1 if frame_index > 0 else 0].copy()
+        original_image = original_images[frame_index - 1 if frame_index > 0 else 0].copy()
+
     image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     roi_pixel_list.clear()
     roi_confidence_list.clear()
@@ -206,6 +251,7 @@ while not glfw.window_should_close(window):
     good_roi_data_list.clear()
     R_roi = None
 
+    zoom = 1.0
     if default_focal_len is not None:
         focal_len = float(frame_info[frame_index]['focal_len'])
         zoom = focal_len / default_focal_len
@@ -235,9 +281,33 @@ while not glfw.window_should_close(window):
     easting, northing, h_enu = enu.geodetic2enu(lat, long, h_abs, lat0, lon0, h0)
 
     t_drone_mundo = np.array([[easting], [northing], [h_enu]])
-    graphics.print_on_pixel(image, f"index:{frame_index}, N:{int(northing)}, E:{int(easting)}, h_rel:{h_rel}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,0))
+
+    # # Estima velocidade no frame
+    # if frame_index > 1 and frame_index % 50 == 1:
+    #     h_abs_ant = float(frame_info[frame_index-1]['abs_alt'])
+    #     lat_ant = float(frame_info[frame_index-1]['latitude'])
+    #     long_ant = float(frame_info[frame_index-1]['longitude'])
+    #     easting_ant, northing_ant, h_enu_ant = enu.geodetic2enu(lat_ant, long_ant, h_abs_ant, lat0, lon0, h0)
+    #     t_drone_mundo_ant = np.array([[easting_ant], [northing_ant], [h_enu_ant]])
+    #     vel = np.linalg.norm(t_drone_mundo - t_drone_mundo_ant) / (frame_info[frame_index]["diff_time_ms"] * 1e-3)
+    #     print(f"Frame: {frame_index}; Velocidade estimada: {vel} m/s")
+
+    # # Estima velocidade angular no frame
+    # if frame_index > 1 and frame_index % 50 == 1:
+    #     yaw_ant = float(frame_info[frame_index-1]['gb_yaw'])
+    #     pitch_ant = float(frame_info[frame_index-1]['gb_pitch'])
+    #     roll_ant = float(frame_info[frame_index-1]['gb_roll'])
+    #     R_drone_ant = geometry.yaw_pitch_roll_to_rotation_matrix(yaw_ant, pitch_ant, roll_ant)
+    #     vel_ang = np.abs(geometry.angle_Rs(R_drone, R_drone_ant)) / (frame_info[frame_index]["diff_time_ms"] * 1e-3)
+    #     # print(f"Frame: {frame_index}; Velocidade angular estimada: {vel_ang} degrees/s")
+    #     print(f"{frame_index}; {vel_ang}")
+
+    graphics.print_on_pixel(image, f"index:{frame_index}, Dist:{round(np.linalg.norm(t_drone_mundo), 2)}, N:{int(northing)}, E:{int(easting)}, h_rel:{h_rel}, yaw:{yaw}, pitch:{pitch}, roll:{roll}", 10, 10, (0,0,120))
 
     R = geometry.droneToCameraR @ R_drone_T @ geometry.mundoToDroneR
+
+    t_rec_server = threading.Thread(target=ReconstructionClient.choose_frames_for_rec, args=(original_image, t_drone_mundo, R, lat0, lon0, h0, frame_index,), daemon=True)
+    t_rec_server.start()
 
     if get_roi:
         rois = cv2.selectROIs("Select ROIs", image)
@@ -283,28 +353,41 @@ while not glfw.window_should_close(window):
     
     t =  - R @ t_drone_mundo
 
-    # Carro
-    pixel_car = K @ np.concatenate((R, t), axis=1) @ np.vstack((t_car_mundo, [1]))
-    pixel_car = pixel_car.flatten()
-    pixel_car = pixel_car / pixel_car[2]
-    graphics.instantiate(image, K, R, t, t_car_mundo, "red", t_drone_mundo, pitch)
+    # # Carro
+    # pixel_car = K @ np.concatenate((R, t), axis=1) @ np.vstack((t_car_mundo, [1]))
+    # pixel_car = pixel_car.flatten()
+    # pixel_car = pixel_car / pixel_car[2]
+    # graphics.instantiate(image, K, R, t, t_car_mundo, "red", t_drone_mundo, pitch)
+
+    # Ponto 1
+    # graphics.instantiate(image, K, R, t, t_p1_mundo, "yellow", t_drone_mundo, pitch)
+
+    # Ponto 2
+    pixel_p2 = K @ np.concatenate((R, t), axis=1) @ np.vstack((t_p2_mundo, [1]))
+    pixel_p2 = pixel_p2.flatten()
+    pixel_p2 = pixel_p2 / pixel_p2[2]
+    graphics.instantiate(image, K, R, t, t_p2_mundo, "yellow", t_drone_mundo, pitch)
+
+    # Ponto 3
+    # graphics.instantiate(image, K, R, t, t_p3_mundo, "yellow", t_drone_mundo, pitch)
 
     # Origem coordenada ENU
     graphics.instantiate(image, K, R, t, np.array([[0],[0],[0]]), "black", t_drone_mundo, pitch)
 
     for click in clicks:
-        click_ENU = geodetic.get_intersection_from_click(click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset)
+        click_ENU, color = geodetic.get_intersection_from_click(click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset, dist_coeff=dist_coeff)
         if click_ENU is not None:
-            erro_car = np.linalg.norm(click_ENU - t_car_mundo)
-            dist_drone = np.linalg.norm(t_drone_mundo - t_car_mundo)
-            # Frame; Erro; Altura do Drone; Distância do Drone; Click ENU; Click Pixel; Car Pixel; Drone ENU
-            # print(f"{frame_index}; {erro_car}; {h_rel}; {dist_drone}; {click_ENU.copy().flatten()}; {(click[0], click[1])}; {(pixel_car[0], pixel_car[1])}; {t_drone_mundo.copy().flatten()}")
-            clicks_ENU.append(click_ENU)
+            erro_ponto2 = np.linalg.norm(click_ENU - t_p2_mundo)
+            dist_drone = np.linalg.norm(t_drone_mundo - t_p2_mundo)
+            # Frame; Erro; Altura do Drone; Distância do Drone; Zoom; Click ENU; Click Pixel; Car Pixel; Drone ENU
+            # print(f"{frame_index}; {erro_ponto2}; {h_rel}; {dist_drone}; {zoom}; {click_ENU.copy().flatten()}; {(click[0], click[1])}; {(pixel_p2[0], pixel_p2[1])}; {t_drone_mundo.copy().flatten()}")
+            click_ENU_colored = (click_ENU, color)
+            clicks_ENU.append(click_ENU_colored)
 
     clicks.clear()
 
     for r_click in r_clicks:
-        r_click_ENU = geodetic.get_intersection_from_click(r_click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset)
+        r_click_ENU, _ = geodetic.get_intersection_from_click(r_click, K_inv, R_drone, t_drone_mundo, dem_elevation_data, h_abs, h0, utm0_x, utm0_y, h_dem_offset, dist_coeff=dist_coeff)
         if r_click_ENU is not None:
             r_clicks_ENU.append(r_click_ENU)
 
@@ -313,8 +396,9 @@ while not glfw.window_should_close(window):
     for r_click_ENU in r_clicks_ENU:
         close_dist = 1e10
         close_it = 0
-        for it, click_ENU in enumerate(clicks_ENU):
-            dist = np.linalg.norm(r_click_ENU - click_ENU)
+        for it, click_ENU_colored in enumerate(clicks_ENU):
+            click_enu, _ = click_ENU_colored
+            dist = np.linalg.norm(r_click_ENU - click_enu)
             if dist < close_dist:
                 close_it = it
                 close_dist = dist
@@ -325,23 +409,23 @@ while not glfw.window_should_close(window):
         clicks_to_remove.sort()
         new_clicks_ENU = []
         r_it = 0
-        for it, click_ENU in enumerate(clicks_ENU):
+        for it, click_ENU_colored in enumerate(clicks_ENU):
             if it == clicks_to_remove[r_it]:
                 if r_it + 1 < len(clicks_to_remove):
                     r_it = r_it + 1
             else:
-                new_clicks_ENU.append(click_ENU)
+                new_clicks_ENU.append(click_ENU_colored)
         
         clicks_to_remove.clear()
         clicks_ENU = deque(new_clicks_ENU, maxlen=10)
     
     clicks_ENU_copy = clicks_ENU.copy()
 
-    for enu_click in clicks_ENU_copy:
-        graphics.instantiate(image, K, R, t, enu_click, "blue", t_drone_mundo, pitch)
+    for enu_click_colored in clicks_ENU_copy:
+        graphics.instantiate(image, K, R, t, enu_click_colored[0], enu_click_colored[1], t_drone_mundo, pitch)
         if R_roi is not None:
-            graphics.instantiate(image, K, R_roi, - R_roi @ t_drone_mundo, enu_click, "green", t_drone_mundo, pitch)
-    
+            graphics.instantiate(image, K, R_roi, - R_roi @ t_drone_mundo, enu_click_colored[0], enu_click_colored[1], t_drone_mundo, pitch)
+
     glfw.poll_events()
     glfw.swap_buffers(window)
     
@@ -350,6 +434,9 @@ while not glfw.window_should_close(window):
     
     cv2.imshow(window_name, image)
     cv2.setMouseCallback(window_name, mouse_click, (clicks, r_clicks))
+
+    if not enable_video_navigation:
+        frame_index += 1
     
     end_frame = time.perf_counter_ns()
     frame_time = end_frame - start_frame
